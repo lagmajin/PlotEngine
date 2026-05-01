@@ -1,0 +1,29 @@
+# Build
+build/
+cmake-build-*/
+
+# IDE
+.vscode/
+.idea/
+*.user
+CMakeSettings.json
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Compiled
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
