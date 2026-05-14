@@ -1,4 +1,5 @@
 #include "notepanel.h"
+import PlotEngine.Core.NovelProject;
 #include <QVBoxLayout>
 
 NotePanel::NotePanel(QWidget *parent)

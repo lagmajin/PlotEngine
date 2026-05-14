@@ -7,22 +7,30 @@
 #include <QJsonObject>
 #include <QJsonArray>
 
-struct Scene {
+struct Episode {
     QString id;
     QString title;
+    QString summary;
     QString content;
     QDateTime createdAt;
     QDateTime modifiedAt;
+    QString revisionNotes;
+
+    QString povCharacter;
+    QString timePeriod;
+    int emotionalIntensity = 5;
+    QString sceneType;
+    int targetWordCount = 0;
 
     QJsonObject toJson() const;
-    static Scene fromJson(const QJsonObject &json);
+    static Episode fromJson(const QJsonObject &json);
 };
 
 struct Chapter {
     QString id;
     QString title;
     QString summary;
-    QVector<Scene> scenes;
+    QVector<Episode> episodes;
     int sortOrder = 0;
 
     QJsonObject toJson() const;

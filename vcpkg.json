@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "plotengine",
+  "version-string": "1.0.0",
+  "description": "PlotEngine novel writing IDE",
+  "supports": "windows",
+  "dependencies": [
+    "qtbase",
+    "qt-advanced-docking-system"
+  ]
+}

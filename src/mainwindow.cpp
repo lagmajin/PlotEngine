@@ -1,20 +1,29 @@
 #include "mainwindow.h"
-#include "core/projectmanager.h"
+import PlotEngine.Core.NovelProject;
+import PlotEngine.Core.ProjectManager;
+import PlotEngine.Core.TextUtils;
+import PlotEngine.AI.RevisionPrompt;
+#include "DockManager.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QApplication>
+#include <QClipboard>
 #include <QTextStream>
+#include <QTextCursor>
 #include <QScreen>
+#include <QInputDialog>
+#include <QStringList>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setMinimumSize(1000, 600);
     applyStyleSheet();
+    setupDockManager();
+    setupDockWidgets();
+    setupEditorTabs();
     setupMenuBar();
     setupToolBar();
-    setupEditorTabs();
-    setupDockWidgets();
     setupStatusBar();
     connectSignals();
     updateStatusBar();
@@ -61,6 +70,7 @@ void MainWindow::setupMenuBar()
     auto *viewMenu = menuBar()->addMenu("表示(&V)");
     viewMenu->addAction(m_structureDock->toggleViewAction());
     viewMenu->addAction(m_noteDock->toggleViewAction());
+    viewMenu->addAction(m_editorDock->toggleViewAction());
 
     auto *helpMenu = menuBar()->addMenu("ヘルプ(&H)");
     helpMenu->addAction("PlotEngine について", this, [this]() {
@@ -80,13 +90,25 @@ void MainWindow::setupToolBar()
     toolbar->addAction("保存", this, &MainWindow::saveProject);
     toolbar->addSeparator();
     toolbar->addAction("章追加", this, &MainWindow::addChapter);
-    toolbar->addAction("シーン追加", this, [this]() {
+    toolbar->addAction("エピソード追加", this, [this]() {
         if (m_project.chapters.isEmpty()) return;
-        addScene(m_project.chapters.first().id);
+        addEpisode(m_project.chapters.first().id);
     });
+    toolbar->addAction("推敲", this, &MainWindow::polishCurrentEpisode);
     toolbar->addSeparator();
     toolbar->addAction("キャラ追加", this, &MainWindow::addCharacter);
     toolbar->addAction("場所追加", this, &MainWindow::addLocation);
+}
+
+void MainWindow::setupDockManager()
+{
+    ads::CDockManager::setConfigFlags(ads::CDockManager::DefaultOpaqueConfig);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::TabsAtBottom, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::FocusHighlighting, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaHideDisabledButtons, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaDynamicTabsMenuButtonVisibility, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::HideSingleCentralWidgetTitleBar, true);
+    m_dockManager = new ads::CDockManager(this);
 }
 
 void MainWindow::setupEditorTabs()
@@ -95,7 +117,9 @@ void MainWindow::setupEditorTabs()
     m_editorTabs->setTabsClosable(true);
     m_editorTabs->setMovable(true);
     m_editorTabs->setDocumentMode(true);
-    setCentralWidget(m_editorTabs);
+    m_editorDock = m_dockManager->createDockWidget("エディタ");
+    m_editorDock->setWidget(m_editorTabs);
+    m_dockManager->addDockWidget(ads::CenterDockWidgetArea, m_editorDock);
 
     connect(m_editorTabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
         auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(index));
@@ -107,16 +131,14 @@ void MainWindow::setupEditorTabs()
 void MainWindow::setupDockWidgets()
 {
     m_structurePanel = new StructurePanel(this);
-    m_structureDock = new QDockWidget("構造", this);
+    m_structureDock = m_dockManager->createDockWidget("構造");
     m_structureDock->setWidget(m_structurePanel);
-    m_structureDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    addDockWidget(Qt::LeftDockWidgetArea, m_structureDock);
+    m_dockManager->addDockWidget(ads::LeftDockWidgetArea, m_structureDock);
 
     m_notePanel = new NotePanel(this);
-    m_noteDock = new QDockWidget("ノート", this);
+    m_noteDock = m_dockManager->createDockWidget("ノート");
     m_noteDock->setWidget(m_notePanel);
-    m_noteDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    tabifyDockWidget(m_structureDock, m_noteDock);
+    m_dockManager->addDockWidget(ads::LeftDockWidgetArea, m_noteDock);
 }
 
 void MainWindow::setupStatusBar()
@@ -132,8 +154,14 @@ void MainWindow::setupStatusBar()
 
 void MainWindow::connectSignals()
 {
-    connect(m_structurePanel, &StructurePanel::sceneSelected,
-            this, &MainWindow::onSceneSelected);
+    connect(m_structurePanel, &StructurePanel::episodeSelected,
+            this, &MainWindow::onEpisodeSelected);
+    connect(m_structurePanel, &StructurePanel::episodeAddRequested,
+            this, &MainWindow::addEpisode);
+    connect(m_structurePanel, &StructurePanel::chapterRenamed,
+            this, &MainWindow::renameChapter);
+    connect(m_structurePanel, &StructurePanel::episodeRenamed,
+            this, &MainWindow::renameEpisode);
     connect(m_notePanel, &NotePanel::characterSelected,
             this, &MainWindow::onCharacterSelected);
     connect(m_notePanel, &NotePanel::locationSelected,
@@ -186,7 +214,10 @@ bool MainWindow::saveProject()
 {
     if (m_project.filePath.isEmpty())
         return saveProjectAs();
-    return ProjectManager::save(m_project, m_project.filePath);
+    bool ok = ProjectManager::save(m_project, m_project.filePath);
+    if (ok) m_dirty = false;
+    updateStatusBar();
+    return ok;
 }
 
 bool MainWindow::saveProjectAs()
@@ -199,43 +230,44 @@ bool MainWindow::saveProjectAs()
     if (!path.endsWith(".plotproj"))
         path += ".plotproj";
 
-    m_project.filePath = path;
     bool ok = ProjectManager::save(m_project, path);
-    if (ok) m_dirty = false;
+    if (ok) {
+        m_project.filePath = path;
+        m_dirty = false;
+    }
     updateStatusBar();
     return ok;
 }
 
-void MainWindow::onSceneSelected(const QString &chapterId, const QString &sceneId)
+void MainWindow::onEpisodeSelected(const QString &chapterId, const QString &episodeId)
 {
     for (auto &ch : m_project.chapters) {
         if (ch.id != chapterId) continue;
-        for (auto &sc : ch.scenes) {
-            if (sc.id != sceneId) continue;
+        for (auto &ep : ch.episodes) {
+            if (ep.id != episodeId) continue;
 
-            QString tabTitle = ch.title + " / " + sc.title;
+            QString tabTitle = ch.title + " / " + ep.title;
             for (int i = 0; i < m_editorTabs->count(); ++i) {
                 auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
-                if (editor && editor->sceneId() == sceneId) {
+                if (editor && editor->sceneId() == episodeId) {
                     m_editorTabs->setCurrentIndex(i);
                     return;
                 }
             }
 
-            auto *editor = new NovelEditor(sceneId);
-            editor->setContent(sc.content);
+            auto *editor = new NovelEditor(episodeId);
+            editor->setContent(ep.content);
             int idx = m_editorTabs->addTab(editor, tabTitle);
             m_editorTabs->setCurrentIndex(idx);
 
             connect(editor, &NovelEditor::contentChanged, this,
-                [this, chapterId, sceneId](const QString &text) {
+                [this, chapterId, episodeId](const QString &text) {
                     for (auto &ch2 : m_project.chapters) {
                         if (ch2.id != chapterId) continue;
-                        for (auto &sc2 : ch2.scenes) {
-                            if (sc2.id != sceneId) {
-                                sc2.content = text;
-                                sc2.modifiedAt = QDateTime::currentDateTime();
-                            }
+                        for (auto &ep2 : ch2.episodes) {
+                            if (ep2.id != episodeId) continue;
+                            ep2.content = text;
+                            ep2.modifiedAt = QDateTime::currentDateTime();
                         }
                     }
                     m_dirty = true;
@@ -327,20 +359,171 @@ void MainWindow::addChapter()
     m_structurePanel->loadProject(m_project);
 }
 
-void MainWindow::addScene(const QString &chapterId)
+void MainWindow::addEpisode(const QString &chapterId)
 {
     for (auto &ch : m_project.chapters) {
         if (ch.id != chapterId) continue;
-        Scene sc;
-        sc.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        sc.title = "Scene " + QString::number(ch.scenes.size() + 1);
-        sc.createdAt = QDateTime::currentDateTime();
-        sc.modifiedAt = QDateTime::currentDateTime();
-        ch.scenes.append(sc);
+        Episode ep;
+        ep.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        ep.title = "エピソード" + QString::number(ch.episodes.size() + 1);
+        ep.createdAt = QDateTime::currentDateTime();
+        ep.modifiedAt = QDateTime::currentDateTime();
+        ch.episodes.append(ep);
         break;
     }
     m_dirty = true;
     m_structurePanel->loadProject(m_project);
+}
+
+void MainWindow::renameChapter(const QString &chapterId, const QString &title)
+{
+    if (title.trimmed().isEmpty()) {
+        m_structurePanel->loadProject(m_project);
+        return;
+    }
+
+    for (auto &ch : m_project.chapters) {
+        if (ch.id == chapterId) {
+            ch.title = title;
+            m_dirty = true;
+            for (int i = 0; i < m_editorTabs->count(); ++i) {
+                auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
+                if (!editor) continue;
+                for (const auto &ep : ch.episodes) {
+                    if (ep.id != editor->sceneId()) continue;
+                    m_editorTabs->setTabText(i, ch.title + " / " + ep.title);
+                    break;
+                }
+            }
+            updateStatusBar();
+            break;
+        }
+    }
+}
+
+void MainWindow::renameEpisode(const QString &chapterId, const QString &episodeId, const QString &title)
+{
+    if (title.trimmed().isEmpty()) {
+        m_structurePanel->loadProject(m_project);
+        return;
+    }
+
+    for (auto &ch : m_project.chapters) {
+        if (ch.id != chapterId) continue;
+        for (auto &ep : ch.episodes) {
+            if (ep.id != episodeId) continue;
+            ep.title = title;
+            m_dirty = true;
+            for (int i = 0; i < m_editorTabs->count(); ++i) {
+                auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
+                if (editor && editor->sceneId() == episodeId) {
+                    m_editorTabs->setTabText(i, ch.title + " / " + ep.title);
+                    break;
+                }
+            }
+            updateStatusBar();
+            break;
+        }
+    }
+}
+
+void MainWindow::polishCurrentEpisode()
+{
+    auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+    if (!editor) {
+        QMessageBox::information(this, "推敲", "推敲したいエピソードを開いてください。");
+        return;
+    }
+
+    QString episodeId = editor->sceneId();
+    Episode *episode = nullptr;
+    for (auto &ch : m_project.chapters) {
+        for (auto &ep : ch.episodes) {
+            if (ep.id != episodeId) continue;
+            episode = &ep;
+            break;
+        }
+        if (episode) break;
+    }
+
+    if (!episode) {
+        QMessageBox::warning(this, "推敲", "開いているエピソードを特定できませんでした。");
+        return;
+    }
+
+    QString currentText = editor->toPlainText();
+    QString selectedText = editor->textCursor().selectedText();
+    selectedText.replace(QChar(0x2029), '\n');
+    selectedText.replace(QChar(0x2028), '\n');
+    selectedText = selectedText.trimmed();
+
+    bool ok = false;
+    QString instruction = QInputDialog::getMultiLineText(
+        this,
+        "変更したい内容",
+        "AIに直してほしい内容:",
+        QStringLiteral("文体を保ちながら、冗長な表現を削って読みやすくする"),
+        &ok);
+    if (!ok || instruction.trimmed().isEmpty())
+        return;
+
+    QString protectedText = QInputDialog::getMultiLineText(
+        this,
+        "保護したい本文",
+        selectedText.isEmpty()
+            ? "変更したくない本文や固有表現を貼ってください（空欄可）:"
+            : "選択範囲を保護するなら、そのまま残してください（空欄可）:",
+        selectedText,
+        &ok);
+    if (!ok)
+        return;
+    protectedText = protectedText.trimmed();
+
+    QString mode = QInputDialog::getItem(
+        this,
+        "推敲モード",
+        "処理:",
+        QStringList({"整形して適用", "AI用プロンプトを作成"}),
+        0,
+        false,
+        &ok);
+    if (!ok || mode.isEmpty())
+        return;
+
+    PlotEngine::AI::RevisionPromptRequest request;
+    request.desiredChanges = instruction.trimmed();
+    if (!protectedText.isEmpty()) {
+        request.protectedSnippets.append({
+            selectedText.isEmpty() ? QStringLiteral("保護対象") : QStringLiteral("選択範囲"),
+            protectedText
+        });
+    }
+
+    QString prompt = PlotEngine::AI::buildRevisionPrompt(
+        m_project, chapterId, episodeId, currentText, request);
+    if (mode == "AI用プロンプトを作成") {
+        qApp->clipboard()->setText(prompt);
+        QMessageBox::information(this, "推敲", "AI用プロンプトをクリップボードにコピーしました。");
+        return;
+    }
+
+    QString polished = PlotEngine::Text::normalizeEpisodeText(currentText);
+    editor->setContent(polished);
+    episode->content = polished;
+    episode->modifiedAt = QDateTime::currentDateTime();
+    episode->revisionNotes = instruction.trimmed();
+    if (!protectedText.isEmpty())
+        episode->revisionNotes += "\n[保護] " + protectedText.left(120);
+    m_dirty = true;
+    updateStatusBar();
+
+    const QString diff = PlotEngine::AI::buildRevisionDiffSummary(currentText, polished);
+    QMessageBox box(this);
+    box.setWindowTitle("推敲");
+    box.setText("軽い整形を適用しました。");
+    box.setInformativeText("差分の概要:");
+    box.setDetailedText(diff);
+    box.exec();
 }
 
 void MainWindow::addCharacter()
@@ -406,8 +589,6 @@ void MainWindow::applyStyleSheet()
         QTabWidget::pane { background: #1e1e2e; border: 1px solid #313244; }
         QTabBar::tab { background: #181825; color: #a6adc8; padding: 6px 12px; border: 1px solid #313244; }
         QTabBar::tab:selected { background: #1e1e2e; color: #cdd6f4; border-bottom: 2px solid #89b4fa; }
-        QDockWidget { color: #cdd6f4; titlebar-close-icon: none; }
-        QDockWidget::title { background: #181825; padding: 4px; }
         QTreeView { background: #1e1e2e; color: #cdd6f4; border: none; }
         QTreeView::item:selected { background: #45475a; }
         QTreeView::item:hover { background: #313244; }

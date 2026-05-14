@@ -1,0 +1,23 @@
+{
+  "version": 7,
+  "configurePresets": [
+    {
+      "name": "windows-vcpkg",
+      "displayName": "Windows Vcpkg",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/vcpkg-ninja",
+      "cacheVariables": {
+        "CMAKE_EXPERIMENTAL_CXX_IMPORT_STD": "d0edc3af-4c50-42ea-a356-e2862fe7a444",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-vcpkg-debug",
+      "configurePreset": "windows-vcpkg",
+      "configuration": "Debug"
+    }
+  ]
+}

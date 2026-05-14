@@ -1,6 +1,10 @@
 #include "structurepanel.h"
+import PlotEngine.Core.NovelProject;
 #include <QHeaderView>
 #include <QAction>
+#include <QVBoxLayout>
+#include <QColor>
+#include <QSignalBlocker>
 
 StructurePanel::StructurePanel(QWidget *parent)
     : QWidget(parent)
@@ -10,6 +14,8 @@ StructurePanel::StructurePanel(QWidget *parent)
 
     m_model = new QStandardItemModel(this);
     m_model->setHorizontalHeaderLabels({"構造"});
+    connect(m_model, &QStandardItemModel::itemChanged,
+            this, &StructurePanel::onItemChanged);
 
     m_tree = new QTreeView(this);
     m_tree->setModel(m_model);
@@ -27,6 +33,7 @@ StructurePanel::StructurePanel(QWidget *parent)
 void StructurePanel::loadProject(const NovelProject &project)
 {
     m_project = project;
+    QSignalBlocker blocker(m_model);
     m_model->clear();
     m_model->setHorizontalHeaderLabels({"構造"});
 
@@ -37,13 +44,13 @@ void StructurePanel::loadProject(const NovelProject &project)
         chItem->setEditable(true);
         chItem->setForeground(QColor("#cdd6f4"));
 
-        for (const auto &sc : ch.scenes) {
-            auto *scItem = new QStandardItem(sc.title);
-            scItem->setData(sc.id, Qt::UserRole + 1);
-            scItem->setData("scene", Qt::UserRole + 2);
-            scItem->setData(ch.id, Qt::UserRole + 3);
-            scItem->setForeground(QColor("#a6adc8"));
-            chItem->appendRow(scItem);
+        for (const auto &ep : ch.episodes) {
+            auto *epItem = new QStandardItem(ep.title);
+            epItem->setData(ep.id, Qt::UserRole + 1);
+            epItem->setData("episode", Qt::UserRole + 2);
+            epItem->setData(ch.id, Qt::UserRole + 3);
+            epItem->setForeground(QColor("#a6adc8"));
+            chItem->appendRow(epItem);
         }
         m_model->appendRow(chItem);
     }
@@ -51,14 +58,31 @@ void StructurePanel::loadProject(const NovelProject &project)
     m_tree->expandAll();
 }
 
+void StructurePanel::onItemChanged(QStandardItem *item)
+{
+    if (!item) return;
+
+    QString type = item->data(Qt::UserRole + 2).toString();
+    if (type == "chapter") {
+        emit chapterRenamed(item->data(Qt::UserRole + 1).toString(), item->text().trimmed());
+        return;
+    }
+
+    if (type == "episode") {
+        emit episodeRenamed(item->data(Qt::UserRole + 3).toString(),
+                            item->data(Qt::UserRole + 1).toString(),
+                            item->text().trimmed());
+    }
+}
+
 void StructurePanel::onTreeDoubleClick(const QModelIndex &index)
 {
     QString type = index.data(Qt::UserRole + 2).toString();
-    if (type != "scene") return;
+    if (type != "episode") return;
 
-    QString sceneId = index.data(Qt::UserRole + 1).toString();
+    QString episodeId = index.data(Qt::UserRole + 1).toString();
     QString chapterId = index.data(Qt::UserRole + 3).toString();
-    emit sceneSelected(chapterId, sceneId);
+    emit episodeSelected(chapterId, episodeId);
 }
 
 void StructurePanel::onCustomContextMenu(const QPoint &pos)
@@ -69,16 +93,9 @@ void StructurePanel::onCustomContextMenu(const QPoint &pos)
     QString type = index.data(Qt::UserRole + 2).toString();
     if (type == "chapter") {
         QMenu menu;
-        menu.addAction("シーン追加", this, [this, index]() {
+        menu.addAction("エピソード追加", this, [this, index]() {
             QString chId = index.data(Qt::UserRole + 1).toString();
-            QStandardItem *chItem = m_model->itemFromIndex(index);
-            auto *scItem = new QStandardItem("新シーン");
-            scItem->setData(QUuid::createUuid().toString(QUuid::WithoutBraces), Qt::UserRole + 1);
-            scItem->setData("scene", Qt::UserRole + 2);
-            scItem->setData(chId, Qt::UserRole + 3);
-            scItem->setForeground(QColor("#a6adc8"));
-            chItem->appendRow(scItem);
-            m_tree->expand(index);
+            emit episodeAddRequested(chId);
         });
         menu.exec(m_tree->viewport()->mapToGlobal(pos));
     }
