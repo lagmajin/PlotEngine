@@ -32,6 +32,7 @@ private slots:
     void onCharacterSelected(const QString &characterId);
     void onLocationSelected(const QString &locationId);
     void updateStatusBar();
+    void updateCursorStatus();
     void addChapter();
     void addEpisode(const QString &chapterId);
     void renameChapter(const QString &chapterId, const QString &title);
@@ -39,6 +40,8 @@ private slots:
     void addCharacter();
     void addLocation();
     void polishCurrentEpisode();
+    void quickOpen();
+    void commandPalette();
 
 private:
     void setupMenuBar();
@@ -52,6 +55,15 @@ private:
     void applyStyleSheet();
     bool confirmSaveChanges();
     bool maybeSave();
+    void updateTabDecorations();
+    void refreshExplorerOpenDocuments();
+    void markAllTabsDirty();
+    void markAllTabsClean();
+    void refreshTabTitle(QWidget *widget);
+    QString baseTabTitle(QWidget *widget) const;
+    QString currentBreadcrumbText() const;
+    void updateBreadcrumbStatus();
+    void openQuickOpenResult(const QString &kind, const QString &id);
 
     NovelProject m_project;
     bool m_dirty = false;
@@ -66,4 +78,5 @@ private:
     QLabel *m_statusFile = nullptr;
     QLabel *m_statusWords = nullptr;
     QLabel *m_statusCursor = nullptr;
+    QLabel *m_statusBreadcrumb = nullptr;
 };

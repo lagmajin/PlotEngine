@@ -28,6 +28,10 @@ add_executable(PlotEngine
     src/main.cpp
     src/mainwindow.h
     src/mainwindow.cpp
+    src/editor/noveleditor.h
+    src/editor/noveleditor.cpp
+    src/editor/syntaxhighlighter.h
+    src/editor/syntaxhighlighter.cpp
     src/core/novelproject.h
     src/core/novelproject.cpp
     src/core/projectmanager.h

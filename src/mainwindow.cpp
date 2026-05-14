@@ -4,15 +4,46 @@ import PlotEngine.Core.ProjectManager;
 import PlotEngine.Core.TextUtils;
 import PlotEngine.AI.RevisionPrompt;
 #include "DockManager.h"
+#include <functional>
+
+namespace {
+struct QuickOpenItem {
+    QString kind;
+    QString id;
+    QString label;
+    QString detail;
+};
+
+struct PaletteCommand {
+    QString title;
+    QString category;
+    QString shortcut;
+    std::function<void()> action;
+};
+}
+
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QClipboard>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QKeySequence>
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QLineEdit>
+#include <QTabBar>
 #include <QTextStream>
 #include <QTextCursor>
+#include <QTextBlock>
 #include <QScreen>
 #include <QInputDialog>
 #include <QStringList>
+#include <QVBoxLayout>
+#include <QLabel>
+#include <QHBoxLayout>
+#include <QVector>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -66,6 +97,34 @@ void MainWindow::setupMenuBar()
         auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
         if (editor) editor->redo();
     }, QKeySequence::Redo);
+    editMenu->addSeparator();
+    editMenu->addAction("検索(&F)", this, [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (!editor) return;
+        editor->showSearchBar();
+        const QString selected = editor->textCursor().selectedText().trimmed();
+        if (!selected.isEmpty())
+            editor->setSearchText(selected);
+    }, QKeySequence::Find);
+    editMenu->addAction("置換(&H)", this, [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (!editor) return;
+        editor->showReplaceBar();
+        const QString selected = editor->textCursor().selectedText().trimmed();
+        if (!selected.isEmpty())
+            editor->setSearchText(selected);
+    }, QKeySequence::Replace);
+    editMenu->addAction("次を検索(&G)", this, [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (editor) editor->findNext();
+    }, QKeySequence("F3"));
+    editMenu->addAction("前を検索(&B)", this, [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (editor) editor->findPrevious();
+    }, QKeySequence("Shift+F3"));
+    editMenu->addSeparator();
+    editMenu->addAction("クイックオープン(&P)", this, &MainWindow::quickOpen, QKeySequence("Ctrl+P"));
+    editMenu->addAction("コマンドパレット(&C)", this, &MainWindow::commandPalette, QKeySequence("Ctrl+Shift+P"));
 
     auto *viewMenu = menuBar()->addMenu("表示(&V)");
     viewMenu->addAction(m_structureDock->toggleViewAction());
@@ -88,6 +147,9 @@ void MainWindow::setupToolBar()
     toolbar->addAction("新規", this, &MainWindow::newProject);
     toolbar->addAction("開く", this, &MainWindow::openProject);
     toolbar->addAction("保存", this, &MainWindow::saveProject);
+    toolbar->addSeparator();
+    toolbar->addAction("Quick Open", this, &MainWindow::quickOpen);
+    toolbar->addAction("Command Palette", this, &MainWindow::commandPalette);
     toolbar->addSeparator();
     toolbar->addAction("章追加", this, &MainWindow::addChapter);
     toolbar->addAction("エピソード追加", this, [this]() {
@@ -117,6 +179,9 @@ void MainWindow::setupEditorTabs()
     m_editorTabs->setTabsClosable(true);
     m_editorTabs->setMovable(true);
     m_editorTabs->setDocumentMode(true);
+    m_editorTabs->setElideMode(Qt::ElideMiddle);
+    m_editorTabs->setUsesScrollButtons(true);
+    m_editorTabs->tabBar()->setExpanding(false);
     m_editorDock = m_dockManager->createDockWidget("エディタ");
     m_editorDock->setWidget(m_editorTabs);
     m_dockManager->addDockWidget(ads::CenterDockWidgetArea, m_editorDock);
@@ -125,13 +190,21 @@ void MainWindow::setupEditorTabs()
         auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(index));
         m_editorTabs->removeTab(index);
         if (editor) editor->deleteLater();
+        refreshExplorerOpenDocuments();
+        updateCursorStatus();
+        updateBreadcrumbStatus();
+    });
+    connect(m_editorTabs, &QTabWidget::currentChanged, this, [this]() {
+        updateCursorStatus();
+        refreshExplorerOpenDocuments();
+        updateBreadcrumbStatus();
     });
 }
 
 void MainWindow::setupDockWidgets()
 {
     m_structurePanel = new StructurePanel(this);
-    m_structureDock = m_dockManager->createDockWidget("構造");
+    m_structureDock = m_dockManager->createDockWidget("エクスプローラ");
     m_structureDock->setWidget(m_structurePanel);
     m_dockManager->addDockWidget(ads::LeftDockWidgetArea, m_structureDock);
 
@@ -146,8 +219,10 @@ void MainWindow::setupStatusBar()
     m_statusFile = new QLabel("プロジェクト未読み込み");
     m_statusWords = new QLabel("文字数: 0");
     m_statusCursor = new QLabel("行: 1 列: 1");
+    m_statusBreadcrumb = new QLabel("エクスプローラ");
 
     statusBar()->addWidget(m_statusFile, 1);
+    statusBar()->addWidget(m_statusBreadcrumb, 2);
     statusBar()->addPermanentWidget(m_statusWords);
     statusBar()->addPermanentWidget(m_statusCursor);
 }
@@ -162,10 +237,184 @@ void MainWindow::connectSignals()
             this, &MainWindow::renameChapter);
     connect(m_structurePanel, &StructurePanel::episodeRenamed,
             this, &MainWindow::renameEpisode);
+    connect(m_structurePanel, &StructurePanel::openDocumentRequested,
+            this, &MainWindow::openQuickOpenResult);
     connect(m_notePanel, &NotePanel::characterSelected,
             this, &MainWindow::onCharacterSelected);
     connect(m_notePanel, &NotePanel::locationSelected,
             this, &MainWindow::onLocationSelected);
+}
+
+void MainWindow::quickOpen()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle("クイックオープン");
+    dialog.resize(720, 480);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+
+    auto *hint = new QLabel("タイトルを入力して候補を絞り込みます。Enter で開きます。", &dialog);
+    layout->addWidget(hint);
+
+    auto *filterEdit = new QLineEdit(&dialog);
+    filterEdit->setPlaceholderText("検索...");
+    layout->addWidget(filterEdit);
+
+    auto *list = new QListWidget(&dialog);
+    list->setSelectionMode(QAbstractItemView::SingleSelection);
+    layout->addWidget(list, 1);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    layout->addWidget(buttons);
+
+    QVector<QuickOpenItem> items;
+    for (const auto &ch : m_project.chapters) {
+        items.append({ "chapter", ch.id, ch.title, "章" });
+        for (const auto &ep : ch.episodes)
+            items.append({ "episode", ep.id, ch.title + " / " + ep.title, "エピソード" });
+    }
+    for (const auto &c : m_project.characters)
+        items.append({ "character", c.id, "キャラ: " + c.name, "キャラクター" });
+    for (const auto &l : m_project.locations)
+        items.append({ "location", l.id, "場所: " + l.name, "ロケーション" });
+
+    auto refresh = [&]() {
+        const QString filter = filterEdit->text().trimmed();
+        list->clear();
+        for (const auto &item : items) {
+            if (!filter.isEmpty() && !item.label.contains(filter, Qt::CaseInsensitive) &&
+                !item.detail.contains(filter, Qt::CaseInsensitive))
+                continue;
+
+            auto *entry = new QListWidgetItem(item.label + "    " + item.detail, list);
+            entry->setData(Qt::UserRole, item.kind);
+            entry->setData(Qt::UserRole + 1, item.id);
+        }
+        if (list->count() > 0)
+            list->setCurrentRow(0);
+    };
+
+    connect(filterEdit, &QLineEdit::textChanged, &dialog, [&](const QString &) {
+        refresh();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(list, &QListWidget::itemActivated, &dialog, [&](QListWidgetItem *item) {
+        if (!item) return;
+        openQuickOpenResult(item->data(Qt::UserRole).toString(), item->data(Qt::UserRole + 1).toString());
+        dialog.accept();
+    });
+    connect(filterEdit, &QLineEdit::returnPressed, &dialog, [&]() {
+        auto *item = list->currentItem();
+        if (!item) return;
+        openQuickOpenResult(item->data(Qt::UserRole).toString(), item->data(Qt::UserRole + 1).toString());
+        dialog.accept();
+    });
+
+    refresh();
+    filterEdit->setFocus();
+    dialog.exec();
+}
+
+void MainWindow::commandPalette()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle("コマンドパレット");
+    dialog.resize(760, 520);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+
+    auto *filterEdit = new QLineEdit(&dialog);
+    filterEdit->setPlaceholderText("コマンドを入力...");
+    layout->addWidget(filterEdit);
+
+    auto *list = new QListWidget(&dialog);
+    list->setSelectionMode(QAbstractItemView::SingleSelection);
+    layout->addWidget(list, 1);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    layout->addWidget(buttons);
+
+    QVector<PaletteCommand> commands;
+    commands.append({"クイックオープン", "ナビゲーション", "Ctrl+P", [this]() { quickOpen(); }});
+    commands.append({"検索", "エディタ", "Ctrl+F", [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (!editor) return;
+        editor->showSearchBar();
+    }});
+    commands.append({"置換", "エディタ", "Ctrl+H", [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (!editor) return;
+        editor->showReplaceBar();
+    }});
+    commands.append({"次を検索", "エディタ", "F3", [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (editor) editor->findNext();
+    }});
+    commands.append({"前を検索", "エディタ", "Shift+F3", [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (editor) editor->findPrevious();
+    }});
+    commands.append({"新規プロジェクト", "ファイル", "Ctrl+N", [this]() { newProject(); }});
+    commands.append({"プロジェクトを開く", "ファイル", "Ctrl+O", [this]() { openProject(); }});
+    commands.append({"保存", "ファイル", "Ctrl+S", [this]() { saveProject(); }});
+    commands.append({"名前を付けて保存", "ファイル", "Ctrl+Shift+S", [this]() { saveProjectAs(); }});
+    commands.append({"推敲", "AI", "", [this]() { polishCurrentEpisode(); }});
+    commands.append({"章を追加", "構造", "", [this]() { addChapter(); }});
+    commands.append({"エピソードを追加", "構造", "", [this]() {
+        if (!m_project.chapters.isEmpty())
+            addEpisode(m_project.chapters.first().id);
+    }});
+
+    auto refresh = [&]() {
+        const QString filter = filterEdit->text().trimmed();
+        list->clear();
+        for (int i = 0; i < commands.size(); ++i) {
+            const auto &cmd = commands[i];
+            if (!filter.isEmpty()
+                && !cmd.title.contains(filter, Qt::CaseInsensitive)
+                && !cmd.category.contains(filter, Qt::CaseInsensitive)
+                && !cmd.shortcut.contains(filter, Qt::CaseInsensitive)) {
+                continue;
+            }
+
+            auto *item = new QListWidgetItem(cmd.title, list);
+            item->setData(Qt::UserRole, cmd.category);
+            item->setData(Qt::UserRole + 1, cmd.shortcut);
+            item->setData(Qt::UserRole + 2, i);
+            item->setToolTip(cmd.shortcut.isEmpty() ? cmd.category : cmd.category + " - " + cmd.shortcut);
+        }
+        if (list->count() > 0)
+            list->setCurrentRow(0);
+    };
+
+    auto runCurrent = [&]() {
+        auto *item = list->currentItem();
+        if (!item) return;
+        const int index = item->data(Qt::UserRole + 2).toInt();
+        if (index < 0 || index >= commands.size())
+            return;
+        dialog.accept();
+        commands[index].action();
+    };
+
+    connect(filterEdit, &QLineEdit::textChanged, &dialog, [&](const QString &) {
+        refresh();
+    });
+    connect(filterEdit, &QLineEdit::returnPressed, &dialog, [&]() {
+        runCurrent();
+    });
+    connect(list, &QListWidget::itemActivated, &dialog, [&](QListWidgetItem *) {
+        runCurrent();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    refresh();
+    filterEdit->setFocus();
+    dialog.exec();
 }
 
 void MainWindow::newProject()
@@ -182,7 +431,8 @@ void MainWindow::newProject()
     if (!ok) return;
 
     setCurrentProject(ProjectManager::createNew(name, author));
-    m_dirty = true;
+    markAllTabsClean();
+    markAllTabsDirty();
     m_structurePanel->loadProject(m_project);
     m_notePanel->loadProject(m_project);
     updateStatusBar();
@@ -205,6 +455,7 @@ void MainWindow::openProject()
     }
 
     setCurrentProject(*result);
+    markAllTabsClean();
     m_structurePanel->loadProject(m_project);
     m_notePanel->loadProject(m_project);
     updateStatusBar();
@@ -215,7 +466,7 @@ bool MainWindow::saveProject()
     if (m_project.filePath.isEmpty())
         return saveProjectAs();
     bool ok = ProjectManager::save(m_project, m_project.filePath);
-    if (ok) m_dirty = false;
+    if (ok) markAllTabsClean();
     updateStatusBar();
     return ok;
 }
@@ -233,7 +484,7 @@ bool MainWindow::saveProjectAs()
     bool ok = ProjectManager::save(m_project, path);
     if (ok) {
         m_project.filePath = path;
-        m_dirty = false;
+        markAllTabsClean();
     }
     updateStatusBar();
     return ok;
@@ -256,6 +507,10 @@ void MainWindow::onEpisodeSelected(const QString &chapterId, const QString &epis
             }
 
             auto *editor = new NovelEditor(episodeId);
+            editor->setProperty("documentKind", "episode");
+            editor->setProperty("documentId", episodeId);
+            editor->setProperty("baseTabTitle", tabTitle);
+            editor->setProperty("isDirty", false);
             editor->setContent(ep.content);
             int idx = m_editorTabs->addTab(editor, tabTitle);
             m_editorTabs->setCurrentIndex(idx);
@@ -270,9 +525,14 @@ void MainWindow::onEpisodeSelected(const QString &chapterId, const QString &epis
                             ep2.modifiedAt = QDateTime::currentDateTime();
                         }
                     }
-                    m_dirty = true;
+                    markAllTabsDirty();
                     updateStatusBar();
                 });
+            connect(editor, &QPlainTextEdit::cursorPositionChanged,
+                    this, &MainWindow::updateCursorStatus);
+            refreshExplorerOpenDocuments();
+            updateCursorStatus();
+            updateBreadcrumbStatus();
             return;
         }
     }
@@ -293,6 +553,10 @@ void MainWindow::onCharacterSelected(const QString &characterId)
         }
 
         auto *editor = new NovelEditor(characterId);
+        editor->setProperty("documentKind", "character");
+        editor->setProperty("documentId", characterId);
+        editor->setProperty("baseTabTitle", tabTitle);
+        editor->setProperty("isDirty", false);
         editor->setContent(c.notes);
         int idx = m_editorTabs->addTab(editor, tabTitle);
         m_editorTabs->setCurrentIndex(idx);
@@ -302,8 +566,14 @@ void MainWindow::onCharacterSelected(const QString &characterId)
                 for (auto &c2 : m_project.characters) {
                     if (c2.id == characterId) c2.notes = text;
                 }
-                m_dirty = true;
+                markAllTabsDirty();
+                updateStatusBar();
             });
+        connect(editor, &QPlainTextEdit::cursorPositionChanged,
+                this, &MainWindow::updateCursorStatus);
+        refreshExplorerOpenDocuments();
+        updateCursorStatus();
+        updateBreadcrumbStatus();
         return;
     }
 }
@@ -323,6 +593,10 @@ void MainWindow::onLocationSelected(const QString &locationId)
         }
 
         auto *editor = new NovelEditor(locationId);
+        editor->setProperty("documentKind", "location");
+        editor->setProperty("documentId", locationId);
+        editor->setProperty("baseTabTitle", tabTitle);
+        editor->setProperty("isDirty", false);
         editor->setContent(l.notes);
         int idx = m_editorTabs->addTab(editor, tabTitle);
         m_editorTabs->setCurrentIndex(idx);
@@ -332,8 +606,14 @@ void MainWindow::onLocationSelected(const QString &locationId)
                 for (auto &l2 : m_project.locations) {
                     if (l2.id == locationId) l2.notes = text;
                 }
-                m_dirty = true;
+                markAllTabsDirty();
+                updateStatusBar();
             });
+        connect(editor, &QPlainTextEdit::cursorPositionChanged,
+                this, &MainWindow::updateCursorStatus);
+        refreshExplorerOpenDocuments();
+        updateCursorStatus();
+        updateBreadcrumbStatus();
         return;
     }
 }
@@ -346,6 +626,177 @@ void MainWindow::updateStatusBar()
         m_statusFile->setText(m_project.name + " - " + m_project.filePath);
 
     m_statusWords->setText("文字数: " + QString::number(m_project.totalWordCount()));
+    updateCursorStatus();
+    updateBreadcrumbStatus();
+}
+
+void MainWindow::updateCursorStatus()
+{
+    auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+    if (!editor) {
+        m_statusCursor->setText("行: 1 列: 1");
+        return;
+    }
+
+    QTextCursor cursor = editor->textCursor();
+    int line = cursor.blockNumber() + 1;
+    int column = cursor.positionInBlock() + 1;
+    m_statusCursor->setText(QString("行: %1 列: %2").arg(line).arg(column));
+}
+
+void MainWindow::refreshTabTitle(QWidget *widget)
+{
+    if (!widget) return;
+    const QString base = widget->property("baseTabTitle").toString();
+    if (base.isEmpty()) return;
+
+    const bool dirty = widget->property("isDirty").toBool();
+    const int index = m_editorTabs->indexOf(widget);
+    if (index >= 0) {
+        m_editorTabs->setTabText(index, dirty ? base + " *" : base);
+        m_editorTabs->setTabToolTip(index, dirty ? base + " (未保存)" : base);
+    }
+}
+
+QString MainWindow::baseTabTitle(QWidget *widget) const
+{
+    if (!widget) return QString();
+    return widget->property("baseTabTitle").toString();
+}
+
+void MainWindow::updateTabDecorations()
+{
+    for (int i = 0; i < m_editorTabs->count(); ++i)
+        refreshTabTitle(m_editorTabs->widget(i));
+    refreshExplorerOpenDocuments();
+    updateBreadcrumbStatus();
+}
+
+void MainWindow::refreshExplorerOpenDocuments()
+{
+    if (!m_structurePanel || !m_editorTabs)
+        return;
+
+    QVector<StructurePanel::OpenDocumentEntry> documents;
+    documents.reserve(m_editorTabs->count());
+
+    for (int i = 0; i < m_editorTabs->count(); ++i) {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
+        if (!editor)
+            continue;
+
+        const QString kind = editor->property("documentKind").toString();
+        if (kind != "episode" && kind != "character" && kind != "location")
+            continue;
+
+        const QString title = editor->property("baseTabTitle").toString();
+        const bool dirty = editor->property("isDirty").toBool();
+        const QString detail =
+            kind == "episode" ? QStringLiteral("エピソード") :
+            kind == "character" ? QStringLiteral("キャラクター") :
+            QStringLiteral("ロケーション");
+
+        documents.append({
+            kind,
+            editor->property("documentId").toString(),
+            dirty ? title + QStringLiteral(" *") : title,
+            detail,
+            dirty
+        });
+    }
+
+    m_structurePanel->setOpenDocuments(documents);
+
+    auto *currentEditor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+    if (!currentEditor)
+        return;
+
+    const QString currentKind = currentEditor->property("documentKind").toString();
+    const QString currentId = currentEditor->property("documentId").toString();
+    if (!currentKind.isEmpty() && !currentId.isEmpty())
+        m_structurePanel->selectOpenDocument(currentKind, currentId);
+}
+
+void MainWindow::markAllTabsDirty()
+{
+    for (int i = 0; i < m_editorTabs->count(); ++i) {
+        QWidget *tab = m_editorTabs->widget(i);
+        tab->setProperty("isDirty", true);
+    }
+    m_dirty = true;
+    updateTabDecorations();
+}
+
+void MainWindow::markAllTabsClean()
+{
+    for (int i = 0; i < m_editorTabs->count(); ++i) {
+        QWidget *tab = m_editorTabs->widget(i);
+        tab->setProperty("isDirty", false);
+    }
+    m_dirty = false;
+    updateTabDecorations();
+}
+
+QString MainWindow::currentBreadcrumbText() const
+{
+    auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+    if (!editor)
+        return "エクスプローラ";
+
+    const QString kind = editor->property("documentKind").toString();
+    const QString id = editor->property("documentId").toString();
+
+    if (kind == "episode") {
+        for (const auto &ch : m_project.chapters) {
+            for (const auto &ep : ch.episodes) {
+                if (ep.id == id)
+                    return ch.title + " / " + ep.title;
+            }
+        }
+    } else if (kind == "character") {
+        for (const auto &c : m_project.characters) {
+            if (c.id == id)
+                return "キャラ / " + c.name;
+        }
+    } else if (kind == "location") {
+        for (const auto &l : m_project.locations) {
+            if (l.id == id)
+                return "場所 / " + l.name;
+        }
+    }
+
+    const QString base = baseTabTitle(editor);
+    return base.isEmpty() ? "エディタ" : base;
+}
+
+void MainWindow::updateBreadcrumbStatus()
+{
+    if (m_statusBreadcrumb)
+        m_statusBreadcrumb->setText(currentBreadcrumbText());
+}
+
+void MainWindow::openQuickOpenResult(const QString &kind, const QString &id)
+{
+    if (kind == "episode") {
+        for (const auto &ch : m_project.chapters) {
+            for (const auto &ep : ch.episodes) {
+                if (ep.id == id) {
+                    m_structurePanel->selectEpisode(ch.id, ep.id);
+                    onEpisodeSelected(ch.id, ep.id);
+                    return;
+                }
+            }
+        }
+    } else if (kind == "chapter") {
+        m_structurePanel->selectChapter(id);
+        return;
+    } else if (kind == "character") {
+        onCharacterSelected(id);
+        return;
+    } else if (kind == "location") {
+        onLocationSelected(id);
+        return;
+    }
 }
 
 void MainWindow::addChapter()
@@ -355,8 +806,9 @@ void MainWindow::addChapter()
     ch.title = "第" + QString::number(m_project.chapters.size() + 1) + "章";
     ch.sortOrder = m_project.chapters.size();
     m_project.chapters.append(ch);
-    m_dirty = true;
+    markAllTabsDirty();
     m_structurePanel->loadProject(m_project);
+    updateStatusBar();
 }
 
 void MainWindow::addEpisode(const QString &chapterId)
@@ -371,8 +823,9 @@ void MainWindow::addEpisode(const QString &chapterId)
         ch.episodes.append(ep);
         break;
     }
-    m_dirty = true;
+    markAllTabsDirty();
     m_structurePanel->loadProject(m_project);
+    updateStatusBar();
 }
 
 void MainWindow::renameChapter(const QString &chapterId, const QString &title)
@@ -385,16 +838,18 @@ void MainWindow::renameChapter(const QString &chapterId, const QString &title)
     for (auto &ch : m_project.chapters) {
         if (ch.id == chapterId) {
             ch.title = title;
-            m_dirty = true;
             for (int i = 0; i < m_editorTabs->count(); ++i) {
                 auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
                 if (!editor) continue;
                 for (const auto &ep : ch.episodes) {
                     if (ep.id != editor->sceneId()) continue;
-                    m_editorTabs->setTabText(i, ch.title + " / " + ep.title);
+                    const QString baseTitle = ch.title + " / " + ep.title;
+                    editor->setProperty("baseTabTitle", baseTitle);
+                    refreshTabTitle(editor);
                     break;
                 }
             }
+            markAllTabsDirty();
             updateStatusBar();
             break;
         }
@@ -413,14 +868,15 @@ void MainWindow::renameEpisode(const QString &chapterId, const QString &episodeI
         for (auto &ep : ch.episodes) {
             if (ep.id != episodeId) continue;
             ep.title = title;
-            m_dirty = true;
             for (int i = 0; i < m_editorTabs->count(); ++i) {
                 auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
                 if (editor && editor->sceneId() == episodeId) {
-                    m_editorTabs->setTabText(i, ch.title + " / " + ep.title);
+                    editor->setProperty("baseTabTitle", ch.title + " / " + ep.title);
+                    refreshTabTitle(editor);
                     break;
                 }
             }
+            markAllTabsDirty();
             updateStatusBar();
             break;
         }
@@ -514,7 +970,7 @@ void MainWindow::polishCurrentEpisode()
     episode->revisionNotes = instruction.trimmed();
     if (!protectedText.isEmpty())
         episode->revisionNotes += "\n[保護] " + protectedText.left(120);
-    m_dirty = true;
+    markAllTabsDirty();
     updateStatusBar();
 
     const QString diff = PlotEngine::AI::buildRevisionDiffSummary(currentText, polished);
@@ -532,8 +988,9 @@ void MainWindow::addCharacter()
     c.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     c.name = "新キャラクター";
     m_project.characters.append(c);
-    m_dirty = true;
+    markAllTabsDirty();
     m_notePanel->loadProject(m_project);
+    updateStatusBar();
 }
 
 void MainWindow::addLocation()
@@ -542,20 +999,23 @@ void MainWindow::addLocation()
     l.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     l.name = "新場所";
     m_project.locations.append(l);
-    m_dirty = true;
+    markAllTabsDirty();
     m_notePanel->loadProject(m_project);
+    updateStatusBar();
 }
 
 void MainWindow::setCurrentProject(const NovelProject &project)
 {
     m_project = project;
-    m_dirty = false;
+    markAllTabsClean();
 
     while (m_editorTabs->count() > 0) {
         auto *w = m_editorTabs->widget(0);
         m_editorTabs->removeTab(0);
         w->deleteLater();
     }
+    refreshExplorerOpenDocuments();
+    updateBreadcrumbStatus();
 }
 
 bool MainWindow::confirmSaveChanges()
@@ -578,22 +1038,28 @@ bool MainWindow::maybeSave()
 void MainWindow::applyStyleSheet()
 {
     qApp->setStyleSheet(R"(
-        QMainWindow { background: #1e1e2e; }
-        QMenuBar { background: #181825; color: #cdd6f4; }
-        QMenuBar::item:selected { background: #45475a; }
-        QMenu { background: #1e1e2e; color: #cdd6f4; border: 1px solid #313244; }
-        QMenu::item:selected { background: #45475a; }
-        QToolBar { background: #181825; border: none; spacing: 4px; padding: 2px; }
-        QToolBar QToolButton { color: #cdd6f4; padding: 4px 8px; }
-        QToolBar QToolButton:hover { background: #45475a; }
-        QTabWidget::pane { background: #1e1e2e; border: 1px solid #313244; }
-        QTabBar::tab { background: #181825; color: #a6adc8; padding: 6px 12px; border: 1px solid #313244; }
-        QTabBar::tab:selected { background: #1e1e2e; color: #cdd6f4; border-bottom: 2px solid #89b4fa; }
-        QTreeView { background: #1e1e2e; color: #cdd6f4; border: none; }
-        QTreeView::item:selected { background: #45475a; }
-        QTreeView::item:hover { background: #313244; }
-        QStatusBar { background: #181825; color: #a6adc8; }
+        QMainWindow { background: #1e1e1e; }
+        QMenuBar { background: #252526; color: #cccccc; padding: 2px 6px; }
+        QMenuBar::item:selected { background: #094771; }
+        QMenu { background: #252526; color: #cccccc; border: 1px solid #1f1f1f; }
+        QMenu::item:selected { background: #094771; }
+        QToolBar { background: #2d2d2d; border: none; spacing: 4px; padding: 4px; }
+        QToolBar QToolButton { color: #cccccc; padding: 4px 10px; border-radius: 3px; }
+        QToolBar QToolButton:hover { background: #3e3e42; }
+        QTabWidget::pane { background: #1e1e1e; border: 1px solid #3c3c3c; }
+        QTabBar::tab { background: #2d2d2d; color: #cccccc; padding: 7px 12px; border: 1px solid #3c3c3c; border-bottom: none; min-width: 120px; }
+        QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; border-bottom: 2px solid #007acc; }
+        QTabBar::tab:hover { background: #3e3e42; }
+        QTreeView { background: #1e1e1e; color: #cccccc; border: none; }
+        QTreeView::item:selected { background: #094771; }
+        QTreeView::item:hover { background: #2a2d2e; }
+        QStatusBar { background: #007acc; color: #ffffff; }
+        QStatusBar QLabel { color: #ffffff; }
         QStatusBar::item { border: none; }
-        QSplitter::handle { background: #313244; }
+        QSplitter::handle { background: #3c3c3c; }
+        QDialog { background: #1e1e1e; color: #cccccc; }
+        QLineEdit { background: #3c3c3c; color: #ffffff; border: 1px solid #3c3c3c; padding: 6px 8px; }
+        QListWidget { background: #252526; color: #cccccc; border: 1px solid #3c3c3c; }
+        QListWidget::item:selected { background: #094771; }
     )");
 }
