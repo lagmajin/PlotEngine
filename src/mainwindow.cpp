@@ -369,6 +369,28 @@ void MainWindow::commandPalette()
             addEpisode(m_project.chapters.first().id);
     }});
 
+    for (int i = 0; i < m_editorTabs->count(); ++i) {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
+        if (!editor)
+            continue;
+
+        const QString kind = editor->property("documentKind").toString();
+        const QString id = editor->property("documentId").toString();
+        if (kind != "episode" && kind != "character" && kind != "location")
+            continue;
+
+        const QString title = editor->property("baseTabTitle").toString();
+        const bool dirty = editor->property("isDirty").toBool();
+        const QString category =
+            kind == "episode" ? QStringLiteral("開いているエディタ / エピソード") :
+            kind == "character" ? QStringLiteral("開いているエディタ / キャラクター") :
+            QStringLiteral("開いているエディタ / ロケーション");
+        const QString shortcut = dirty ? QStringLiteral("未保存") : QString();
+
+        commands.append({dirty ? title + QStringLiteral(" *") : title, category, shortcut,
+                         [this, kind, id]() { openQuickOpenResult(kind, id); }});
+    }
+
     auto refresh = [&]() {
         const QString filter = filterEdit->text().trimmed();
         list->clear();

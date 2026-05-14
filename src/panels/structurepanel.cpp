@@ -52,6 +52,10 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_openDocumentsTree->setHeaderHidden(true);
     m_openDocumentsTree->setAnimated(true);
     m_openDocumentsTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_openDocumentsTree->setRootIsDecorated(false);
+    m_openDocumentsTree->setIndentation(0);
+    m_openDocumentsTree->setAlternatingRowColors(true);
+    m_openDocumentsTree->setUniformRowHeights(true);
     m_openDocumentsTree->header()->setStretchLastSection(true);
     openLayout->addWidget(m_openDocumentsTree);
 
