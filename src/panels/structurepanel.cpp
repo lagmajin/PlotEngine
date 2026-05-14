@@ -6,6 +6,7 @@ import PlotEngine.Core.NovelProject;
 #include <QTabWidget>
 #include <QAbstractItemView>
 #include <QColor>
+#include <QFont>
 #include <QSignalBlocker>
 #include <QMenu>
 
@@ -61,9 +62,31 @@ StructurePanel::StructurePanel(QWidget *parent)
 
     m_tabs->addTab(openPage, "開いているエディタ");
 
+    auto *currentPage = new QWidget(m_tabs);
+    auto *currentLayout = new QVBoxLayout(currentPage);
+    currentLayout->setContentsMargins(0, 0, 0, 0);
+
+    m_currentDocumentModel = new QStandardItemModel(this);
+    m_currentDocumentModel->setHorizontalHeaderLabels({"現在のファイル"});
+
+    m_currentDocumentTree = new QTreeView(currentPage);
+    m_currentDocumentTree->setModel(m_currentDocumentModel);
+    m_currentDocumentTree->setHeaderHidden(true);
+    m_currentDocumentTree->setAnimated(true);
+    m_currentDocumentTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_currentDocumentTree->setRootIsDecorated(false);
+    m_currentDocumentTree->setIndentation(0);
+    m_currentDocumentTree->setAlternatingRowColors(true);
+    m_currentDocumentTree->setUniformRowHeights(true);
+    m_currentDocumentTree->header()->setStretchLastSection(true);
+    currentLayout->addWidget(m_currentDocumentTree);
+
+    m_tabs->addTab(currentPage, "現在のファイル");
+
     connect(m_structureTree, &QTreeView::doubleClicked, this, &StructurePanel::onStructureDoubleClick);
     connect(m_structureTree, &QTreeView::customContextMenuRequested, this, &StructurePanel::onStructureContextMenu);
     connect(m_openDocumentsTree, &QTreeView::doubleClicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
+    connect(m_currentDocumentTree, &QTreeView::doubleClicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
 }
 
 void StructurePanel::loadProject(const NovelProject &project)
@@ -140,15 +163,54 @@ void StructurePanel::setOpenDocuments(const QVector<OpenDocumentEntry> &document
         item->setData(doc.id, Qt::UserRole + 2);
         item->setData(doc.detail, Qt::UserRole + 3);
         item->setEditable(false);
-        item->setForeground(doc.dirty ? QColor("#f38ba8") : QColor("#cdd6f4"));
+        QFont font = item->font();
+        font.setBold(doc.dirty);
+        item->setFont(font);
+        item->setForeground(doc.dirty ? QColor("#ff8fa3") : QColor("#cdd6f4"));
+        if (doc.dirty)
+            item->setBackground(QColor("#3a1f25"));
         if (!doc.detail.isEmpty())
-            item->setToolTip(doc.detail + (doc.dirty ? " (未保存)" : ""));
+            item->setToolTip(doc.detail + (doc.dirty ? " - 未保存" : ""));
         else if (doc.dirty)
             item->setToolTip("未保存");
         m_openDocumentsModel->appendRow(item);
     }
 
     m_openDocumentsTree->expandAll();
+}
+
+void StructurePanel::setCurrentDocument(const OpenDocumentEntry &document)
+{
+    QSignalBlocker blocker(m_currentDocumentModel);
+    m_currentDocumentModel->clear();
+    m_currentDocumentModel->setHorizontalHeaderLabels({"現在のファイル"});
+
+    if (document.id.isEmpty()) {
+        auto *item = new QStandardItem("現在のファイルはありません");
+        item->setEditable(false);
+        item->setForeground(QColor("#6b7280"));
+        m_currentDocumentModel->appendRow(item);
+        return;
+    }
+
+    auto *item = new QStandardItem(document.title);
+    item->setData(document.kind, Qt::UserRole + 1);
+    item->setData(document.id, Qt::UserRole + 2);
+    item->setData(document.detail, Qt::UserRole + 3);
+    item->setEditable(false);
+    QFont font = item->font();
+    font.setBold(true);
+    item->setFont(font);
+    item->setForeground(document.dirty ? QColor("#ff8fa3") : QColor("#ffffff"));
+    item->setBackground(document.dirty ? QColor("#3a1f25") : QColor("#1f2937"));
+    if (!document.detail.isEmpty())
+        item->setToolTip(document.detail + (document.dirty ? " - 未保存" : ""));
+    else if (document.dirty)
+        item->setToolTip("未保存");
+    m_currentDocumentModel->appendRow(item);
+    m_currentDocumentTree->expandAll();
+    m_currentDocumentTree->setCurrentIndex(item->index());
+    m_currentDocumentTree->scrollTo(item->index());
 }
 
 void StructurePanel::selectOpenDocument(const QString &kind, const QString &id)

@@ -27,6 +27,7 @@ public:
     void selectChapter(const QString &chapterId);
     void selectEpisode(const QString &chapterId, const QString &episodeId);
     void setOpenDocuments(const QVector<OpenDocumentEntry> &documents);
+    void setCurrentDocument(const OpenDocumentEntry &document);
     void selectOpenDocument(const QString &kind, const QString &id);
 
 signals:
@@ -48,7 +49,9 @@ private:
     QTabWidget *m_tabs = nullptr;
     QTreeView *m_structureTree = nullptr;
     QTreeView *m_openDocumentsTree = nullptr;
+    QTreeView *m_currentDocumentTree = nullptr;
     QStandardItemModel *m_structureModel = nullptr;
     QStandardItemModel *m_openDocumentsModel = nullptr;
+    QStandardItemModel *m_currentDocumentModel = nullptr;
     NovelProject m_project;
 };

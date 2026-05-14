@@ -124,7 +124,8 @@ void MainWindow::setupMenuBar()
     }, QKeySequence("Shift+F3"));
     editMenu->addSeparator();
     editMenu->addAction("クイックオープン(&P)", this, &MainWindow::quickOpen, QKeySequence("Ctrl+P"));
-    editMenu->addAction("コマンドパレット(&C)", this, &MainWindow::commandPalette, QKeySequence("Ctrl+Shift+P"));
+    auto *paletteAction = editMenu->addAction("コマンドパレット(&C)", this, &MainWindow::commandPalette);
+    paletteAction->setShortcuts({QKeySequence("Ctrl+Shift+P"), QKeySequence("Ctrl+K, Ctrl+P")});
 
     auto *viewMenu = menuBar()->addMenu("表示(&V)");
     viewMenu->addAction(m_structureDock->toggleViewAction());
@@ -721,7 +722,7 @@ void MainWindow::refreshExplorerOpenDocuments()
         documents.append({
             kind,
             editor->property("documentId").toString(),
-            dirty ? title + QStringLiteral(" *") : title,
+            title,
             detail,
             dirty
         });
@@ -730,13 +731,31 @@ void MainWindow::refreshExplorerOpenDocuments()
     m_structurePanel->setOpenDocuments(documents);
 
     auto *currentEditor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
-    if (!currentEditor)
+    if (!currentEditor) {
+        m_structurePanel->setCurrentDocument(StructurePanel::OpenDocumentEntry{});
         return;
+    }
 
     const QString currentKind = currentEditor->property("documentKind").toString();
     const QString currentId = currentEditor->property("documentId").toString();
-    if (!currentKind.isEmpty() && !currentId.isEmpty())
+    const QString currentTitle = currentEditor->property("baseTabTitle").toString();
+    const bool currentDirty = currentEditor->property("isDirty").toBool();
+    if (!currentKind.isEmpty() && !currentId.isEmpty()) {
+        StructurePanel::OpenDocumentEntry currentEntry;
+        currentEntry.kind = currentKind;
+        currentEntry.id = currentId;
+        currentEntry.title = currentTitle;
+        currentEntry.detail =
+            currentKind == "episode" ? QStringLiteral("エピソード") :
+            currentKind == "character" ? QStringLiteral("キャラクター") :
+            QStringLiteral("ロケーション");
+        currentEntry.dirty = currentDirty;
+        m_structurePanel->setCurrentDocument(currentEntry);
         m_structurePanel->selectOpenDocument(currentKind, currentId);
+        return;
+    }
+
+    m_structurePanel->setCurrentDocument(StructurePanel::OpenDocumentEntry{});
 }
 
 void MainWindow::markAllTabsDirty()
