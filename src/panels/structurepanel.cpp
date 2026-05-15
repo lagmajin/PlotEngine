@@ -19,6 +19,27 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_tabs = new QTabWidget(this);
     m_tabs->setDocumentMode(true);
     m_tabs->setMovable(false);
+    m_tabs->setStyleSheet(R"(
+        QTabBar::tab {
+            background: #252526;
+            color: #cccccc;
+            border: 1px solid #3c3c3c;
+            border-bottom: none;
+            padding: 8px 12px;
+            min-width: 120px;
+        }
+        QTabBar::tab:selected {
+            background: #1e1e1e;
+            color: #ffffff;
+        }
+        QTabBar::tab:hover {
+            background: #2a2d2e;
+        }
+        QTabWidget::pane {
+            border: 1px solid #3c3c3c;
+            background: #1e1e1e;
+        }
+    )");
     layout->addWidget(m_tabs);
 
     auto *structurePage = new QWidget(m_tabs);
@@ -36,6 +57,10 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_structureTree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_structureTree->setAnimated(true);
     m_structureTree->setEditTriggers(QAbstractItemView::DoubleClicked);
+    m_structureTree->setRootIsDecorated(true);
+    m_structureTree->setIndentation(14);
+    m_structureTree->setAlternatingRowColors(true);
+    m_structureTree->setUniformRowHeights(true);
     m_structureTree->header()->setStretchLastSection(true);
     structureLayout->addWidget(m_structureTree);
 
@@ -57,6 +82,11 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_openDocumentsTree->setIndentation(0);
     m_openDocumentsTree->setAlternatingRowColors(true);
     m_openDocumentsTree->setUniformRowHeights(true);
+    m_openDocumentsTree->setStyleSheet(R"(
+        QTreeView::item {
+            padding: 5px 6px;
+        }
+    )");
     m_openDocumentsTree->header()->setStretchLastSection(true);
     openLayout->addWidget(m_openDocumentsTree);
 
@@ -78,6 +108,11 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_currentDocumentTree->setIndentation(0);
     m_currentDocumentTree->setAlternatingRowColors(true);
     m_currentDocumentTree->setUniformRowHeights(true);
+    m_currentDocumentTree->setStyleSheet(R"(
+        QTreeView::item {
+            padding: 6px 6px;
+        }
+    )");
     m_currentDocumentTree->header()->setStretchLastSection(true);
     currentLayout->addWidget(m_currentDocumentTree);
 
@@ -87,6 +122,7 @@ StructurePanel::StructurePanel(QWidget *parent)
     connect(m_structureTree, &QTreeView::customContextMenuRequested, this, &StructurePanel::onStructureContextMenu);
     connect(m_openDocumentsTree, &QTreeView::doubleClicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
     connect(m_currentDocumentTree, &QTreeView::doubleClicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
+    connect(m_currentDocumentTree, &QTreeView::clicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
 }
 
 void StructurePanel::loadProject(const NovelProject &project)
@@ -189,6 +225,7 @@ void StructurePanel::setCurrentDocument(const OpenDocumentEntry &document)
         auto *item = new QStandardItem("現在のファイルはありません");
         item->setEditable(false);
         item->setForeground(QColor("#6b7280"));
+        item->setBackground(QColor("#1e1e1e"));
         m_currentDocumentModel->appendRow(item);
         return;
     }
