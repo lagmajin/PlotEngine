@@ -3,32 +3,75 @@ import PlotEngine.Core.NovelProject;
 #include <QHeaderView>
 #include <QAction>
 #include <QVBoxLayout>
-#include <QTabWidget>
 #include <QAbstractItemView>
 #include <QColor>
 #include <QFont>
 #include <QSignalBlocker>
 #include <QMenu>
-#include <QStyle>
+#include <QIcon>
+#include <QSizePolicy>
 #include <QApplication>
+#include <QPainter>
+#include <QPixmap>
+#include <QRectF>
+#include <QPointF>
+#include <QToolButton>
+#include <QFrame>
 
 namespace {
 QIcon documentIcon(const QString &kind, bool dirty = false)
 {
-    const QStyle *style = QApplication::style();
-    if (!style)
-        return QIcon();
+    QPixmap pix(16, 16);
+    pix.fill(Qt::transparent);
 
-    if (kind == "chapter")
-        return style->standardIcon(QStyle::SP_DirIcon);
-    if (kind == "episode")
-        return dirty ? style->standardIcon(QStyle::SP_MessageBoxWarning)
-                     : style->standardIcon(QStyle::SP_FileIcon);
-    if (kind == "character")
-        return style->standardIcon(QStyle::SP_FileDialogContentsView);
-    if (kind == "location")
-        return style->standardIcon(QStyle::SP_DriveHDIcon);
-    return style->standardIcon(QStyle::SP_FileIcon);
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+
+    if (kind == "chapter") {
+        p.setBrush(QColor("#4f8cff"));
+        p.drawRoundedRect(QRectF(1.5, 3.5, 12.5, 10.0), 2, 2);
+        p.setBrush(QColor("#7cc0ff"));
+        p.drawRoundedRect(QRectF(3.0, 1.5, 5.5, 3.5), 1, 1);
+    } else if (kind == "episode") {
+        p.setBrush(QColor(dirty ? "#ff6b6b" : "#cdd6f4"));
+        p.drawRoundedRect(QRectF(3, 1.5, 9, 13), 2, 2);
+        p.setBrush(QColor("#1e1e2e"));
+        p.drawRect(QRectF(5, 4, 5, 1));
+        p.drawRect(QRectF(5, 7, 4, 1));
+        p.drawRect(QRectF(5, 10, 3, 1));
+    } else if (kind == "character") {
+        p.setBrush(QColor("#ffb86c"));
+        p.drawEllipse(QPointF(8, 5), 3, 3);
+        p.setBrush(QColor("#ffb86c"));
+        p.drawRoundedRect(QRectF(4.5, 8, 7, 5), 2, 2);
+    } else if (kind == "location") {
+        p.setBrush(QColor("#50fa7b"));
+        p.drawEllipse(QPointF(8, 6), 4, 4);
+        p.drawRoundedRect(QRectF(7, 7, 2, 6), 1, 1);
+        p.setBrush(QColor("#1e1e2e"));
+        p.drawEllipse(QPointF(8, 6), 1.7, 1.7);
+    } else {
+        p.setBrush(QColor("#94a3b8"));
+        p.drawRoundedRect(QRectF(2.5, 2.5, 11, 11), 2, 2);
+    }
+
+    if (dirty) {
+        p.setBrush(QColor("#ff6b6b"));
+        p.drawEllipse(QPointF(13.5, 2.5), 1.8, 1.8);
+    }
+
+    return QIcon(pix);
+}
+
+void styleExplorerTree(QTreeView *tree, int paddingLeft, const QString &selectionColor)
+{
+    tree->setStyleSheet(QStringLiteral(
+        "QTreeView { background: #1e1e1e; border: none; outline: none; }"
+        "QTreeView::item { padding: 5px 6px; margin-left: %1px; }"
+        "QTreeView::item:selected { background: %2; color: #ffffff; }"
+        "QTreeView::item:hover { background: #2a2d2e; }"
+    ).arg(paddingLeft).arg(selectionColor));
 }
 }
 
@@ -37,34 +80,9 @@ StructurePanel::StructurePanel(QWidget *parent)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(6);
 
-    m_tabs = new QTabWidget(this);
-    m_tabs->setDocumentMode(true);
-    m_tabs->setMovable(false);
-    m_tabs->setStyleSheet(R"(
-        QTabBar::tab {
-            background: #252526;
-            color: #cccccc;
-            border: 1px solid #3c3c3c;
-            border-bottom: none;
-            padding: 8px 12px;
-            min-width: 120px;
-        }
-        QTabBar::tab:selected {
-            background: #1e1e1e;
-            color: #ffffff;
-        }
-        QTabBar::tab:hover {
-            background: #2a2d2e;
-        }
-        QTabWidget::pane {
-            border: 1px solid #3c3c3c;
-            background: #1e1e1e;
-        }
-    )");
-    layout->addWidget(m_tabs);
-
-    auto *structurePage = new QWidget(m_tabs);
+    auto *structurePage = new QWidget(this);
     auto *structureLayout = new QVBoxLayout(structurePage);
     structureLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -83,20 +101,14 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_structureTree->setIndentation(14);
     m_structureTree->setAlternatingRowColors(true);
     m_structureTree->setUniformRowHeights(true);
-    m_structureTree->setStyleSheet(R"(
-        QTreeView::item {
-            padding: 5px 6px;
-        }
-        QTreeView::item:selected {
-            background: #094771;
-        }
-    )");
+    styleExplorerTree(m_structureTree, 0, "#094771");
     m_structureTree->header()->setStretchLastSection(true);
     structureLayout->addWidget(m_structureTree);
 
-    m_tabs->addTab(structurePage, documentIcon("chapter"), "構造");
+    m_structureSection = createSection("構造", structurePage, &m_structureHeader);
+    layout->addWidget(m_structureSection);
 
-    auto *openPage = new QWidget(m_tabs);
+    auto *openPage = new QWidget(this);
     auto *openLayout = new QVBoxLayout(openPage);
     openLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -112,20 +124,14 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_openDocumentsTree->setIndentation(0);
     m_openDocumentsTree->setAlternatingRowColors(true);
     m_openDocumentsTree->setUniformRowHeights(true);
-    m_openDocumentsTree->setStyleSheet(R"(
-        QTreeView::item {
-            padding: 5px 6px;
-        }
-        QTreeView::item:selected {
-            background: #094771;
-        }
-    )");
+    styleExplorerTree(m_openDocumentsTree, 0, "#094771");
     m_openDocumentsTree->header()->setStretchLastSection(true);
     openLayout->addWidget(m_openDocumentsTree);
 
-    m_tabs->addTab(openPage, documentIcon("episode"), "開いているエディタ");
+    m_openDocumentsSection = createSection("開いているエディタ", openPage, &m_openDocumentsHeader);
+    layout->addWidget(m_openDocumentsSection);
 
-    auto *currentPage = new QWidget(m_tabs);
+    auto *currentPage = new QWidget(this);
     auto *currentLayout = new QVBoxLayout(currentPage);
     currentLayout->setContentsMargins(0, 0, 0, 0);
 
@@ -141,25 +147,82 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_currentDocumentTree->setIndentation(0);
     m_currentDocumentTree->setAlternatingRowColors(true);
     m_currentDocumentTree->setUniformRowHeights(true);
-    m_currentDocumentTree->setStyleSheet(R"(
-        QTreeView::item {
-            padding: 6px 6px;
-        }
-        QTreeView::item:selected {
-            background: #1f3b52;
-            color: #ffffff;
-        }
-    )");
+    styleExplorerTree(m_currentDocumentTree, 0, "#1f3b52");
     m_currentDocumentTree->header()->setStretchLastSection(true);
     currentLayout->addWidget(m_currentDocumentTree);
 
-    m_tabs->addTab(currentPage, documentIcon("character"), "現在のファイル");
+    m_currentDocumentSection = createSection("現在のファイル", currentPage, &m_currentDocumentHeader);
+    layout->addWidget(m_currentDocumentSection);
+    layout->addStretch(1);
 
     connect(m_structureTree, &QTreeView::doubleClicked, this, &StructurePanel::onStructureDoubleClick);
     connect(m_structureTree, &QTreeView::customContextMenuRequested, this, &StructurePanel::onStructureContextMenu);
     connect(m_openDocumentsTree, &QTreeView::doubleClicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
     connect(m_currentDocumentTree, &QTreeView::doubleClicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
     connect(m_currentDocumentTree, &QTreeView::clicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
+}
+
+QWidget *StructurePanel::createSection(const QString &title, QWidget *content, QToolButton **headerButton)
+{
+    auto *container = new QWidget(this);
+    auto *containerLayout = new QVBoxLayout(container);
+    containerLayout->setContentsMargins(0, 0, 0, 0);
+    containerLayout->setSpacing(0);
+
+    auto *button = new QToolButton(container);
+    button->setText(title);
+    button->setCheckable(true);
+    button->setChecked(true);
+    button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    button->setArrowType(Qt::DownArrow);
+    button->setIcon(documentIcon(title == "構造" ? "chapter" : title == "開いているエディタ" ? "episode" : "character"));
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    button->setStyleSheet(R"(
+        QToolButton {
+            background: #252526;
+            color: #e5e7eb;
+            border: 1px solid #3c3c3c;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 600;
+        }
+        QToolButton:hover {
+            background: #2a2d2e;
+        }
+        QToolButton:checked {
+            background: #2d2d2d;
+        }
+    )");
+
+    auto *frame = new QFrame(container);
+    frame->setFrameShape(QFrame::StyledPanel);
+    frame->setFrameShadow(QFrame::Plain);
+    frame->setStyleSheet("QFrame { border: 1px solid #333333; background: #1e1e1e; }");
+    auto *frameLayout = new QVBoxLayout(frame);
+    frameLayout->setContentsMargins(0, 0, 0, 0);
+    frameLayout->setSpacing(0);
+    frameLayout->addWidget(content);
+
+    containerLayout->addWidget(button);
+    containerLayout->addWidget(frame);
+
+    connect(button, &QToolButton::toggled, this, [frame, button](bool checked) {
+        frame->setVisible(checked);
+        button->setArrowType(checked ? Qt::DownArrow : Qt::RightArrow);
+    });
+
+    if (headerButton)
+        *headerButton = button;
+
+    return container;
+}
+
+void StructurePanel::setSectionExpanded(QToolButton *button, QWidget *content, bool expanded)
+{
+    if (!button || !content)
+        return;
+    button->setChecked(expanded);
+    content->setVisible(expanded);
 }
 
 void StructurePanel::loadProject(const NovelProject &project)

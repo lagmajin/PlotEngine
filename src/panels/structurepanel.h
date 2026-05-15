@@ -6,9 +6,8 @@
 #include <QTreeView>
 #include <QStandardItemModel>
 #include <QStandardItem>
+#include <QToolButton>
 #include "core/novelproject.h"
-
-class QTabWidget;
 
 class StructurePanel : public QWidget {
     Q_OBJECT
@@ -45,8 +44,15 @@ private slots:
 
 private:
     void selectStructureIndex(const QModelIndex &index);
+    QWidget *createSection(const QString &title, QWidget *content, QToolButton **headerButton = nullptr);
+    void setSectionExpanded(QToolButton *button, QWidget *content, bool expanded);
 
-    QTabWidget *m_tabs = nullptr;
+    QToolButton *m_structureHeader = nullptr;
+    QToolButton *m_openDocumentsHeader = nullptr;
+    QToolButton *m_currentDocumentHeader = nullptr;
+    QWidget *m_structureSection = nullptr;
+    QWidget *m_openDocumentsSection = nullptr;
+    QWidget *m_currentDocumentSection = nullptr;
     QTreeView *m_structureTree = nullptr;
     QTreeView *m_openDocumentsTree = nullptr;
     QTreeView *m_currentDocumentTree = nullptr;

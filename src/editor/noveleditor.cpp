@@ -53,6 +53,7 @@ NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
         "QLineEdit { background: #11111b; color: #cdd6f4; border: 1px solid #313244; padding: 4px 6px; }"
         "QPushButton { background: #313244; color: #cdd6f4; border: 1px solid #45475a; padding: 4px 8px; }"
         "QPushButton:hover { background: #45475a; }"
+        "QLabel#searchStatus { color: #a6adc8; padding: 0 6px; }"
     );
     setPlaceholderText("ここに本文を書いてください...");
     setTabStopDistance(fontMetrics().horizontalAdvance(' ') * 4);
@@ -81,7 +82,10 @@ NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
     m_replaceOneButton = new QPushButton("置換", m_searchBar);
     m_replaceAllButton = new QPushButton("全置換", m_searchBar);
     m_closeSearchButton = new QPushButton("閉じる", m_searchBar);
+    m_searchStatusLabel = new QLabel("0 件", m_searchBar);
+    m_searchStatusLabel->setObjectName("searchStatus");
 
+    searchLayout->addWidget(m_searchStatusLabel);
     searchLayout->addWidget(m_searchPrevButton);
     searchLayout->addWidget(m_searchNextButton);
     searchLayout->addWidget(m_replaceOneButton);
@@ -95,7 +99,7 @@ NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
     connect(this, &QPlainTextEdit::updateRequest,
             this, &NovelEditor::updateLineNumberArea);
     connect(this, &QPlainTextEdit::cursorPositionChanged,
-            this, &NovelEditor::highlightCurrentLine);
+            this, &NovelEditor::updateSearchHighlights);
     connect(this, &QPlainTextEdit::textChanged,
             this, &NovelEditor::onTextChanged);
 
@@ -110,7 +114,7 @@ NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
     connect(m_closeSearchButton, &QPushButton::clicked, this, &NovelEditor::hideSearchBar);
 
     updateLineNumberAreaWidth(0);
-    highlightCurrentLine();
+    updateSearchHighlights();
 }
 
 void NovelEditor::setContent(const QString &text)
@@ -118,6 +122,7 @@ void NovelEditor::setContent(const QString &text)
     m_loading = true;
     setPlainText(text);
     m_loading = false;
+    updateSearchHighlights();
 }
 
 void NovelEditor::showSearchBar()
@@ -129,6 +134,7 @@ void NovelEditor::showSearchBar()
     m_searchBarHeight = m_searchBar->sizeHint().height();
     updateViewportMargins();
     updateSearchBarGeometry();
+    updateSearchHighlights();
 }
 
 void NovelEditor::showReplaceBar()
@@ -201,6 +207,7 @@ int NovelEditor::replaceAll()
 void NovelEditor::setSearchText(const QString &text)
 {
     m_searchEdit->setText(text);
+    updateSearchHighlights();
 }
 
 QString NovelEditor::currentSearchText() const
@@ -210,18 +217,22 @@ QString NovelEditor::currentSearchText() const
 
 void NovelEditor::onTextChanged()
 {
-    if (!m_loading)
+    if (!m_loading) {
         emit contentChanged(toPlainText());
+        updateSearchHighlights();
+    }
 }
 
 void NovelEditor::onSearchTextEdited(const QString &text)
 {
+    updateSearchHighlights();
     if (!text.trimmed().isEmpty())
         findNext();
 }
 
 void NovelEditor::onReplaceTextEdited(const QString &)
 {
+    updateSearchHighlights();
 }
 
 void NovelEditor::onSearchNext()
@@ -237,11 +248,13 @@ void NovelEditor::onSearchPrevious()
 void NovelEditor::onReplaceOne()
 {
     replaceCurrent();
+    updateSearchHighlights();
 }
 
 void NovelEditor::onReplaceAll()
 {
     replaceAll();
+    updateSearchHighlights();
 }
 
 void NovelEditor::hideSearchBar()
@@ -250,6 +263,7 @@ void NovelEditor::hideSearchBar()
     m_searchBarHeight = 0;
     updateViewportMargins();
     updateSearchBarGeometry();
+    updateSearchHighlights();
     setFocus();
 }
 
@@ -284,18 +298,7 @@ void NovelEditor::updateLineNumberArea(const QRect &rect, int dy)
 
 void NovelEditor::highlightCurrentLine()
 {
-    QList<QPlainTextEdit::ExtraSelection> extraSelections;
-
-    if (!isReadOnly()) {
-        QPlainTextEdit::ExtraSelection selection;
-        selection.format.setBackground(QColor("#313244"));
-        selection.format.setProperty(QTextFormat::FullWidthSelection, true);
-        selection.cursor = textCursor();
-        selection.cursor.clearSelection();
-        extraSelections.append(selection);
-    }
-
-    setExtraSelections(extraSelections);
+    updateSearchHighlights();
 }
 
 void NovelEditor::resizeEvent(QResizeEvent *event)
@@ -372,4 +375,63 @@ bool NovelEditor::findInternal(const QString &text, QTextDocument::FindFlags fla
     }
 
     return true;
+}
+
+int NovelEditor::countSearchHits(const QString &text) const
+{
+    if (text.isEmpty())
+        return 0;
+
+    int hits = 0;
+    QTextCursor cursor(document());
+    cursor.movePosition(QTextCursor::Start);
+    while (true) {
+        cursor = document()->find(text, cursor);
+        if (cursor.isNull())
+            break;
+        ++hits;
+    }
+    return hits;
+}
+
+void NovelEditor::updateSearchHighlights()
+{
+    QList<QPlainTextEdit::ExtraSelection> selections;
+
+    if (!isReadOnly()) {
+        QPlainTextEdit::ExtraSelection currentLine;
+        currentLine.format.setBackground(QColor("#313244"));
+        currentLine.format.setProperty(QTextFormat::FullWidthSelection, true);
+        currentLine.cursor = textCursor();
+        currentLine.cursor.clearSelection();
+        selections.append(currentLine);
+    }
+
+    const QString search = currentSearchText();
+    if (!search.isEmpty()) {
+        const int hitCount = countSearchHits(search);
+        QTextCursor cursor(document());
+        cursor.movePosition(QTextCursor::Start);
+
+        while (true) {
+            cursor = document()->find(search, cursor);
+            if (cursor.isNull())
+                break;
+
+            QPlainTextEdit::ExtraSelection selection;
+            selection.cursor = cursor;
+            QTextCharFormat format;
+            format.setBackground(QColor("#665c00"));
+            format.setForeground(QColor("#ffffff"));
+            selection.format = format;
+            selections.append(selection);
+        }
+
+        if (m_searchStatusLabel)
+            m_searchStatusLabel->setText(QString::number(hitCount) + " 件");
+    } else if (m_searchStatusLabel) {
+        m_searchStatusLabel->setText("0 件");
+    }
+
+    setExtraSelections(selections);
 }

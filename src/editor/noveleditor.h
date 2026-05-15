@@ -9,6 +9,7 @@
 
 class QLineEdit;
 class QPushButton;
+class QLabel;
 class SyntaxHighlighter;
 class LineNumberArea;
 
@@ -55,11 +56,14 @@ private:
     void updateSearchBarGeometry();
     void updateViewportMargins();
     bool findInternal(const QString &text, QTextDocument::FindFlags flags);
+    void updateSearchHighlights();
+    int countSearchHits(const QString &text) const;
 
     QString m_sceneId;
     SyntaxHighlighter *m_highlighter = nullptr;
     LineNumberArea *m_lineNumberArea = nullptr;
     QWidget *m_searchBar = nullptr;
+    QLabel *m_searchStatusLabel = nullptr;
     QLineEdit *m_searchEdit = nullptr;
     QLineEdit *m_replaceEdit = nullptr;
     QPushButton *m_searchNextButton = nullptr;
