@@ -9,6 +9,28 @@ import PlotEngine.Core.NovelProject;
 #include <QFont>
 #include <QSignalBlocker>
 #include <QMenu>
+#include <QStyle>
+#include <QApplication>
+
+namespace {
+QIcon documentIcon(const QString &kind, bool dirty = false)
+{
+    const QStyle *style = QApplication::style();
+    if (!style)
+        return QIcon();
+
+    if (kind == "chapter")
+        return style->standardIcon(QStyle::SP_DirIcon);
+    if (kind == "episode")
+        return dirty ? style->standardIcon(QStyle::SP_MessageBoxWarning)
+                     : style->standardIcon(QStyle::SP_FileIcon);
+    if (kind == "character")
+        return style->standardIcon(QStyle::SP_FileDialogContentsView);
+    if (kind == "location")
+        return style->standardIcon(QStyle::SP_DriveHDIcon);
+    return style->standardIcon(QStyle::SP_FileIcon);
+}
+}
 
 StructurePanel::StructurePanel(QWidget *parent)
     : QWidget(parent)
@@ -61,10 +83,18 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_structureTree->setIndentation(14);
     m_structureTree->setAlternatingRowColors(true);
     m_structureTree->setUniformRowHeights(true);
+    m_structureTree->setStyleSheet(R"(
+        QTreeView::item {
+            padding: 5px 6px;
+        }
+        QTreeView::item:selected {
+            background: #094771;
+        }
+    )");
     m_structureTree->header()->setStretchLastSection(true);
     structureLayout->addWidget(m_structureTree);
 
-    m_tabs->addTab(structurePage, "構造");
+    m_tabs->addTab(structurePage, documentIcon("chapter"), "構造");
 
     auto *openPage = new QWidget(m_tabs);
     auto *openLayout = new QVBoxLayout(openPage);
@@ -86,11 +116,14 @@ StructurePanel::StructurePanel(QWidget *parent)
         QTreeView::item {
             padding: 5px 6px;
         }
+        QTreeView::item:selected {
+            background: #094771;
+        }
     )");
     m_openDocumentsTree->header()->setStretchLastSection(true);
     openLayout->addWidget(m_openDocumentsTree);
 
-    m_tabs->addTab(openPage, "開いているエディタ");
+    m_tabs->addTab(openPage, documentIcon("episode"), "開いているエディタ");
 
     auto *currentPage = new QWidget(m_tabs);
     auto *currentLayout = new QVBoxLayout(currentPage);
@@ -112,11 +145,15 @@ StructurePanel::StructurePanel(QWidget *parent)
         QTreeView::item {
             padding: 6px 6px;
         }
+        QTreeView::item:selected {
+            background: #1f3b52;
+            color: #ffffff;
+        }
     )");
     m_currentDocumentTree->header()->setStretchLastSection(true);
     currentLayout->addWidget(m_currentDocumentTree);
 
-    m_tabs->addTab(currentPage, "現在のファイル");
+    m_tabs->addTab(currentPage, documentIcon("character"), "現在のファイル");
 
     connect(m_structureTree, &QTreeView::doubleClicked, this, &StructurePanel::onStructureDoubleClick);
     connect(m_structureTree, &QTreeView::customContextMenuRequested, this, &StructurePanel::onStructureContextMenu);
@@ -138,6 +175,7 @@ void StructurePanel::loadProject(const NovelProject &project)
         chItem->setData("chapter", Qt::UserRole + 2);
         chItem->setEditable(true);
         chItem->setForeground(QColor("#cdd6f4"));
+        chItem->setIcon(documentIcon("chapter"));
 
         for (const auto &ep : ch.episodes) {
             auto *epItem = new QStandardItem(ep.title);
@@ -145,6 +183,7 @@ void StructurePanel::loadProject(const NovelProject &project)
             epItem->setData("episode", Qt::UserRole + 2);
             epItem->setData(ch.id, Qt::UserRole + 3);
             epItem->setForeground(QColor("#a6adc8"));
+            epItem->setIcon(documentIcon("episode"));
             chItem->appendRow(epItem);
         }
         m_structureModel->appendRow(chItem);
@@ -199,6 +238,7 @@ void StructurePanel::setOpenDocuments(const QVector<OpenDocumentEntry> &document
         item->setData(doc.id, Qt::UserRole + 2);
         item->setData(doc.detail, Qt::UserRole + 3);
         item->setEditable(false);
+        item->setIcon(documentIcon(doc.kind, doc.dirty));
         QFont font = item->font();
         font.setBold(doc.dirty);
         item->setFont(font);
@@ -235,6 +275,7 @@ void StructurePanel::setCurrentDocument(const OpenDocumentEntry &document)
     item->setData(document.id, Qt::UserRole + 2);
     item->setData(document.detail, Qt::UserRole + 3);
     item->setEditable(false);
+    item->setIcon(documentIcon(document.kind, document.dirty));
     QFont font = item->font();
     font.setBold(true);
     item->setFont(font);
