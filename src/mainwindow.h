@@ -57,6 +57,8 @@ private:
     bool maybeSave();
     void updateTabDecorations();
     void refreshExplorerOpenDocuments();
+    void closeOpenDocument(const QString &kind, const QString &id);
+    void closeOtherOpenDocuments(const QString &kind, const QString &id);
     void markAllTabsDirty();
     void markAllTabsClean();
     void refreshTabTitle(QWidget *widget);

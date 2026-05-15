@@ -240,6 +240,10 @@ void MainWindow::connectSignals()
             this, &MainWindow::renameEpisode);
     connect(m_structurePanel, &StructurePanel::openDocumentRequested,
             this, &MainWindow::openQuickOpenResult);
+    connect(m_structurePanel, &StructurePanel::openDocumentCloseRequested,
+            this, &MainWindow::closeOpenDocument);
+    connect(m_structurePanel, &StructurePanel::openOtherDocumentsRequested,
+            this, &MainWindow::closeOtherOpenDocuments);
     connect(m_notePanel, &NotePanel::characterSelected,
             this, &MainWindow::onCharacterSelected);
     connect(m_notePanel, &NotePanel::locationSelected,
@@ -756,6 +760,50 @@ void MainWindow::refreshExplorerOpenDocuments()
     }
 
     m_structurePanel->setCurrentDocument(StructurePanel::OpenDocumentEntry{});
+}
+
+void MainWindow::closeOpenDocument(const QString &kind, const QString &id)
+{
+    for (int i = 0; i < m_editorTabs->count(); ++i) {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
+        if (!editor)
+            continue;
+        if (editor->property("documentKind").toString() != kind)
+            continue;
+        if (editor->property("documentId").toString() != id)
+            continue;
+
+        auto *tab = m_editorTabs->widget(i);
+        m_editorTabs->removeTab(i);
+        if (tab)
+            tab->deleteLater();
+        refreshExplorerOpenDocuments();
+        updateCursorStatus();
+        updateBreadcrumbStatus();
+        return;
+    }
+}
+
+void MainWindow::closeOtherOpenDocuments(const QString &kind, const QString &id)
+{
+    for (int i = m_editorTabs->count() - 1; i >= 0; --i) {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
+        if (!editor)
+            continue;
+        const QString docKind = editor->property("documentKind").toString();
+        const QString docId = editor->property("documentId").toString();
+        if (docKind == kind && docId == id)
+            continue;
+
+        auto *tab = m_editorTabs->widget(i);
+        m_editorTabs->removeTab(i);
+        if (tab)
+            tab->deleteLater();
+    }
+
+    refreshExplorerOpenDocuments();
+    updateCursorStatus();
+    updateBreadcrumbStatus();
 }
 
 void MainWindow::markAllTabsDirty()

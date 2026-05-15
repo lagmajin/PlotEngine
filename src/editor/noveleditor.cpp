@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QFontDatabase>
 #include <QHBoxLayout>
+#include <QCheckBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPaintEvent>
@@ -77,6 +78,10 @@ NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
     m_replaceEdit->setPlaceholderText("置換後");
     searchLayout->addWidget(m_replaceEdit, 2);
 
+    m_caseSensitiveCheck = new QCheckBox("Aa", m_searchBar);
+    m_caseSensitiveCheck->setToolTip("大文字小文字を区別");
+    m_wholeWordCheck = new QCheckBox("Word", m_searchBar);
+    m_wholeWordCheck->setToolTip("単語単位で検索");
     m_searchPrevButton = new QPushButton("前へ", m_searchBar);
     m_searchNextButton = new QPushButton("次へ", m_searchBar);
     m_replaceOneButton = new QPushButton("置換", m_searchBar);
@@ -86,6 +91,8 @@ NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
     m_searchStatusLabel->setObjectName("searchStatus");
 
     searchLayout->addWidget(m_searchStatusLabel);
+    searchLayout->addWidget(m_caseSensitiveCheck);
+    searchLayout->addWidget(m_wholeWordCheck);
     searchLayout->addWidget(m_searchPrevButton);
     searchLayout->addWidget(m_searchNextButton);
     searchLayout->addWidget(m_replaceOneButton);
@@ -105,6 +112,8 @@ NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
 
     connect(m_searchEdit, &QLineEdit::textEdited, this, &NovelEditor::onSearchTextEdited);
     connect(m_replaceEdit, &QLineEdit::textEdited, this, &NovelEditor::onReplaceTextEdited);
+    connect(m_caseSensitiveCheck, &QCheckBox::toggled, this, &NovelEditor::updateSearchHighlights);
+    connect(m_wholeWordCheck, &QCheckBox::toggled, this, &NovelEditor::updateSearchHighlights);
     connect(m_searchEdit, &QLineEdit::returnPressed, this, &NovelEditor::onSearchNext);
     connect(m_replaceEdit, &QLineEdit::returnPressed, this, &NovelEditor::onReplaceOne);
     connect(m_searchNextButton, &QPushButton::clicked, this, &NovelEditor::onSearchNext);
@@ -149,7 +158,7 @@ bool NovelEditor::findNext()
     const QString text = currentSearchText();
     if (text.isEmpty())
         return false;
-    return findInternal(text, {});
+    return findInternal(text, searchFlags());
 }
 
 bool NovelEditor::findPrevious()
@@ -157,7 +166,7 @@ bool NovelEditor::findPrevious()
     const QString text = currentSearchText();
     if (text.isEmpty())
         return false;
-    return findInternal(text, QTextDocument::FindBackward);
+    return findInternal(text, searchFlags() | QTextDocument::FindBackward);
 }
 
 void NovelEditor::replaceCurrent()
@@ -166,14 +175,18 @@ void NovelEditor::replaceCurrent()
     if (search.isEmpty())
         return;
 
+    const auto flags = searchFlags();
+    const Qt::CaseSensitivity sensitivity = flags.testFlag(QTextDocument::FindCaseSensitively)
+        ? Qt::CaseSensitive
+        : Qt::CaseInsensitive;
     QTextCursor cursor = textCursor();
-    if (cursor.hasSelection() && cursor.selectedText() == search) {
+    if (cursor.hasSelection() && QString::compare(cursor.selectedText(), search, sensitivity) == 0) {
         cursor.insertText(m_replaceEdit->text());
         setTextCursor(cursor);
         findNext();
     } else if (findNext()) {
         cursor = textCursor();
-        if (cursor.hasSelection() && cursor.selectedText() == search) {
+        if (cursor.hasSelection() && QString::compare(cursor.selectedText(), search, sensitivity) == 0) {
             cursor.insertText(m_replaceEdit->text());
             setTextCursor(cursor);
         }
@@ -187,6 +200,7 @@ int NovelEditor::replaceAll()
         return 0;
 
     const QString replacement = m_replaceEdit->text();
+    const auto flags = searchFlags();
     QTextCursor editCursor(document());
     editCursor.beginEditBlock();
     QTextCursor cursor = editCursor;
@@ -194,7 +208,7 @@ int NovelEditor::replaceAll()
 
     int count = 0;
     while (true) {
-        cursor = document()->find(search, cursor);
+        cursor = document()->find(search, cursor, flags);
         if (cursor.isNull())
             break;
         cursor.insertText(replacement);
@@ -386,7 +400,7 @@ int NovelEditor::countSearchHits(const QString &text) const
     QTextCursor cursor(document());
     cursor.movePosition(QTextCursor::Start);
     while (true) {
-        cursor = document()->find(text, cursor);
+        cursor = document()->find(text, cursor, searchFlags());
         if (cursor.isNull())
             break;
         ++hits;
@@ -414,7 +428,7 @@ void NovelEditor::updateSearchHighlights()
         cursor.movePosition(QTextCursor::Start);
 
         while (true) {
-            cursor = document()->find(search, cursor);
+            cursor = document()->find(search, cursor, searchFlags());
             if (cursor.isNull())
                 break;
 
@@ -434,4 +448,14 @@ void NovelEditor::updateSearchHighlights()
     }
 
     setExtraSelections(selections);
+}
+
+QTextDocument::FindFlags NovelEditor::searchFlags() const
+{
+    QTextDocument::FindFlags flags;
+    if (m_caseSensitiveCheck && m_caseSensitiveCheck->isChecked())
+        flags |= QTextDocument::FindCaseSensitively;
+    if (m_wholeWordCheck && m_wholeWordCheck->isChecked())
+        flags |= QTextDocument::FindWholeWords;
+    return flags;
 }

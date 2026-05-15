@@ -10,7 +10,7 @@ import PlotEngine.Core.NovelProject;
 #include <QMenu>
 #include <QIcon>
 #include <QSizePolicy>
-#include <QApplication>
+#include <QSettings>
 #include <QPainter>
 #include <QPixmap>
 #include <QRectF>
@@ -73,6 +73,27 @@ void styleExplorerTree(QTreeView *tree, int paddingLeft, const QString &selectio
         "QTreeView::item:hover { background: #2a2d2e; }"
     ).arg(paddingLeft).arg(selectionColor));
 }
+
+void styleSectionButton(QToolButton *button)
+{
+    button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    button->setStyleSheet(R"(
+        QToolButton {
+            background: #252526;
+            color: #e5e7eb;
+            border: 1px solid #3c3c3c;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 600;
+        }
+        QToolButton:hover {
+            background: #2a2d2e;
+        }
+        QToolButton:checked {
+            background: #2d2d2d;
+        }
+    )");
+}
 }
 
 StructurePanel::StructurePanel(QWidget *parent)
@@ -105,7 +126,7 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_structureTree->header()->setStretchLastSection(true);
     structureLayout->addWidget(m_structureTree);
 
-    m_structureSection = createSection("構造", structurePage, &m_structureHeader);
+    m_structureSection = createSection("構造", structurePage, &m_structureHeader, &m_structureFrame);
     layout->addWidget(m_structureSection);
 
     auto *openPage = new QWidget(this);
@@ -118,6 +139,7 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_openDocumentsTree = new QTreeView(openPage);
     m_openDocumentsTree->setModel(m_openDocumentsModel);
     m_openDocumentsTree->setHeaderHidden(true);
+    m_openDocumentsTree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_openDocumentsTree->setAnimated(true);
     m_openDocumentsTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_openDocumentsTree->setRootIsDecorated(false);
@@ -128,7 +150,7 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_openDocumentsTree->header()->setStretchLastSection(true);
     openLayout->addWidget(m_openDocumentsTree);
 
-    m_openDocumentsSection = createSection("開いているエディタ", openPage, &m_openDocumentsHeader);
+    m_openDocumentsSection = createSection("開いているエディタ", openPage, &m_openDocumentsHeader, &m_openDocumentsFrame);
     layout->addWidget(m_openDocumentsSection);
 
     auto *currentPage = new QWidget(this);
@@ -141,6 +163,7 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_currentDocumentTree = new QTreeView(currentPage);
     m_currentDocumentTree->setModel(m_currentDocumentModel);
     m_currentDocumentTree->setHeaderHidden(true);
+    m_currentDocumentTree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_currentDocumentTree->setAnimated(true);
     m_currentDocumentTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_currentDocumentTree->setRootIsDecorated(false);
@@ -151,18 +174,22 @@ StructurePanel::StructurePanel(QWidget *parent)
     m_currentDocumentTree->header()->setStretchLastSection(true);
     currentLayout->addWidget(m_currentDocumentTree);
 
-    m_currentDocumentSection = createSection("現在のファイル", currentPage, &m_currentDocumentHeader);
+    m_currentDocumentSection = createSection("現在のファイル", currentPage, &m_currentDocumentHeader, &m_currentDocumentFrame);
     layout->addWidget(m_currentDocumentSection);
     layout->addStretch(1);
 
     connect(m_structureTree, &QTreeView::doubleClicked, this, &StructurePanel::onStructureDoubleClick);
     connect(m_structureTree, &QTreeView::customContextMenuRequested, this, &StructurePanel::onStructureContextMenu);
     connect(m_openDocumentsTree, &QTreeView::doubleClicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
+    connect(m_openDocumentsTree, &QTreeView::customContextMenuRequested, this, &StructurePanel::onOpenDocumentsContextMenu);
     connect(m_currentDocumentTree, &QTreeView::doubleClicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
     connect(m_currentDocumentTree, &QTreeView::clicked, this, &StructurePanel::onOpenDocumentsDoubleClick);
+    connect(m_currentDocumentTree, &QTreeView::customContextMenuRequested, this, &StructurePanel::onOpenDocumentsContextMenu);
+
+    loadSectionState();
 }
 
-QWidget *StructurePanel::createSection(const QString &title, QWidget *content, QToolButton **headerButton)
+QWidget *StructurePanel::createSection(const QString &title, QWidget *content, QToolButton **headerButton, QWidget **frameWidget)
 {
     auto *container = new QWidget(this);
     auto *containerLayout = new QVBoxLayout(container);
@@ -173,26 +200,10 @@ QWidget *StructurePanel::createSection(const QString &title, QWidget *content, Q
     button->setText(title);
     button->setCheckable(true);
     button->setChecked(true);
-    button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     button->setArrowType(Qt::DownArrow);
     button->setIcon(documentIcon(title == "構造" ? "chapter" : title == "開いているエディタ" ? "episode" : "character"));
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    button->setStyleSheet(R"(
-        QToolButton {
-            background: #252526;
-            color: #e5e7eb;
-            border: 1px solid #3c3c3c;
-            padding: 8px 10px;
-            text-align: left;
-            font-weight: 600;
-        }
-        QToolButton:hover {
-            background: #2a2d2e;
-        }
-        QToolButton:checked {
-            background: #2d2d2d;
-        }
-    )");
+    styleSectionButton(button);
 
     auto *frame = new QFrame(container);
     frame->setFrameShape(QFrame::StyledPanel);
@@ -210,9 +221,19 @@ QWidget *StructurePanel::createSection(const QString &title, QWidget *content, Q
         frame->setVisible(checked);
         button->setArrowType(checked ? Qt::DownArrow : Qt::RightArrow);
     });
+    connect(button, &QToolButton::toggled, this, [this, title](bool checked) {
+        if (title == "構造")
+            saveSectionState("explorer/structureExpanded", checked);
+        else if (title == "開いているエディタ")
+            saveSectionState("explorer/openExpanded", checked);
+        else if (title == "現在のファイル")
+            saveSectionState("explorer/currentExpanded", checked);
+    });
 
     if (headerButton)
         *headerButton = button;
+    if (frameWidget)
+        *frameWidget = frame;
 
     return container;
 }
@@ -223,6 +244,20 @@ void StructurePanel::setSectionExpanded(QToolButton *button, QWidget *content, b
         return;
     button->setChecked(expanded);
     content->setVisible(expanded);
+}
+
+void StructurePanel::loadSectionState()
+{
+    QSettings settings("PlotEngine", "PlotEngine");
+    setSectionExpanded(m_structureHeader, m_structureFrame, settings.value("explorer/structureExpanded", true).toBool());
+    setSectionExpanded(m_openDocumentsHeader, m_openDocumentsFrame, settings.value("explorer/openExpanded", true).toBool());
+    setSectionExpanded(m_currentDocumentHeader, m_currentDocumentFrame, settings.value("explorer/currentExpanded", true).toBool());
+}
+
+void StructurePanel::saveSectionState(const QString &key, bool expanded) const
+{
+    QSettings settings("PlotEngine", "PlotEngine");
+    settings.setValue(key, expanded);
 }
 
 void StructurePanel::loadProject(const NovelProject &project)
@@ -428,4 +463,32 @@ void StructurePanel::onOpenDocumentsDoubleClick(const QModelIndex &index)
     if (!index.isValid()) return;
     emit openDocumentRequested(index.data(Qt::UserRole + 1).toString(),
                                index.data(Qt::UserRole + 2).toString());
+}
+
+void StructurePanel::onOpenDocumentsContextMenu(const QPoint &pos)
+{
+    auto *tree = qobject_cast<QTreeView*>(sender());
+    if (!tree)
+        return;
+
+    QModelIndex index = tree->indexAt(pos);
+    if (!index.isValid())
+        return;
+
+    const QString kind = index.data(Qt::UserRole + 1).toString();
+    const QString id = index.data(Qt::UserRole + 2).toString();
+    if (kind.isEmpty() || id.isEmpty())
+        return;
+
+    QMenu menu;
+    menu.addAction("開く", this, [this, kind, id]() {
+        emit openDocumentRequested(kind, id);
+    });
+    menu.addAction("閉じる", this, [this, kind, id]() {
+        emit openDocumentCloseRequested(kind, id);
+    });
+    menu.addAction("他を閉じる", this, [this, kind, id]() {
+        emit openOtherDocumentsRequested(kind, id);
+    });
+    menu.exec(tree->viewport()->mapToGlobal(pos));
 }
