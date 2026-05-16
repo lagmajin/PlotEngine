@@ -2,10 +2,12 @@
 
 #include <QPlainTextEdit>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 #include <QResizeEvent>
 #include <QPaintEvent>
 #include <QKeyEvent>
+#include "wobjectdefs.h"
 
 class QLineEdit;
 class QPushButton;
@@ -15,7 +17,7 @@ class SyntaxHighlighter;
 class LineNumberArea;
 
 class NovelEditor : public QPlainTextEdit {
-    Q_OBJECT
+    W_OBJECT(NovelEditor)
 public:
     explicit NovelEditor(const QString &sceneId, QWidget *parent = nullptr);
 
@@ -29,26 +31,39 @@ public:
     int replaceAll();
     void setSearchText(const QString &text);
     QString currentSearchText() const;
+    void setProtectedSnippets(const QStringList &snippets);
 
-signals:
-    void contentChanged(const QString &text);
+public:
+    void contentChanged(const QString &text)
+    W_SIGNAL(contentChanged, (const QString &), text)
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
 
-private slots:
+private:
     void onTextChanged();
+    W_SLOT(onTextChanged)
     void updateLineNumberAreaWidth(int newBlockCount);
+    W_SLOT(updateLineNumberAreaWidth, (int))
     void highlightCurrentLine();
+    W_SLOT(highlightCurrentLine)
     void updateLineNumberArea(const QRect &rect, int dy);
+    W_SLOT(updateLineNumberArea, (const QRect &, int))
     void onSearchTextEdited(const QString &text);
+    W_SLOT(onSearchTextEdited, (const QString &))
     void onReplaceTextEdited(const QString &text);
+    W_SLOT(onReplaceTextEdited, (const QString &))
     void onSearchNext();
+    W_SLOT(onSearchNext)
     void onSearchPrevious();
+    W_SLOT(onSearchPrevious)
     void onReplaceOne();
+    W_SLOT(onReplaceOne)
     void onReplaceAll();
+    W_SLOT(onReplaceAll)
     void hideSearchBar();
+    W_SLOT(hideSearchBar)
 
 private:
     friend class LineNumberArea;
@@ -77,4 +92,5 @@ private:
     QPushButton *m_closeSearchButton = nullptr;
     int m_searchBarHeight = 0;
     bool m_loading = false;
+    QStringList m_protectedSnippets;
 };

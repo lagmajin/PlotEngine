@@ -1,5 +1,6 @@
 #include "noveleditor.h"
 #include "syntaxhighlighter.h"
+#include "wobjectimpl.h"
 
 #include <QColor>
 #include <QFontDatabase>
@@ -15,6 +16,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextFormat>
+#include <QTextEdit>
 #include <QVBoxLayout>
 
 class LineNumberArea : public QWidget {
@@ -39,6 +41,8 @@ protected:
 private:
     NovelEditor *m_editor = nullptr;
 };
+
+W_OBJECT_IMPL(NovelEditor)
 
 NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
     : QPlainTextEdit(parent)
@@ -229,6 +233,14 @@ QString NovelEditor::currentSearchText() const
     return m_searchEdit->text().trimmed();
 }
 
+void NovelEditor::setProtectedSnippets(const QStringList &snippets)
+{
+    if (m_protectedSnippets == snippets)
+        return;
+    m_protectedSnippets = snippets;
+    updateSearchHighlights();
+}
+
 void NovelEditor::onTextChanged()
 {
     if (!m_loading) {
@@ -410,15 +422,37 @@ int NovelEditor::countSearchHits(const QString &text) const
 
 void NovelEditor::updateSearchHighlights()
 {
-    QList<QPlainTextEdit::ExtraSelection> selections;
+    QList<QTextEdit::ExtraSelection> selections;
 
     if (!isReadOnly()) {
-        QPlainTextEdit::ExtraSelection currentLine;
+        QTextEdit::ExtraSelection currentLine;
         currentLine.format.setBackground(QColor("#313244"));
         currentLine.format.setProperty(QTextFormat::FullWidthSelection, true);
         currentLine.cursor = textCursor();
         currentLine.cursor.clearSelection();
         selections.append(currentLine);
+    }
+
+    for (const QString &snippet : m_protectedSnippets) {
+        const QString trimmed = snippet.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+
+        QTextCursor cursor(document());
+        cursor.movePosition(QTextCursor::Start);
+        while (true) {
+            cursor = document()->find(trimmed, cursor, QTextDocument::FindCaseSensitively);
+            if (cursor.isNull())
+                break;
+
+            QTextEdit::ExtraSelection selection;
+            selection.cursor = cursor;
+            QTextCharFormat format;
+            format.setBackground(QColor("#264653"));
+            format.setForeground(QColor("#d8f3dc"));
+            selection.format = format;
+            selections.append(selection);
+        }
     }
 
     const QString search = currentSearchText();
@@ -432,7 +466,7 @@ void NovelEditor::updateSearchHighlights()
             if (cursor.isNull())
                 break;
 
-            QPlainTextEdit::ExtraSelection selection;
+            QTextEdit::ExtraSelection selection;
             selection.cursor = cursor;
             QTextCharFormat format;
             format.setBackground(QColor("#665c00"));
