@@ -1,4 +1,5 @@
 #include "revisionhistorypanel.h"
+#include "widgets/textcompareview.h"
 #include "wobjectimpl.h"
 
 #include <QAbstractItemView>
@@ -50,6 +51,9 @@ RevisionHistoryPanel::RevisionHistoryPanel(QWidget *parent)
     m_diff->setReadOnly(true);
     m_diff->setPlaceholderText(QStringLiteral("現在との差分"));
     m_contentTabs->addTab(m_diff, QStringLiteral("差分"));
+
+    m_compareView = new TextCompareView(m_contentTabs);
+    m_contentTabs->addTab(m_compareView, QStringLiteral("比較"));
     layout->addWidget(m_contentTabs, 1);
 
     m_restoreButton = new QPushButton(QStringLiteral("この履歴に戻す"), this);
@@ -71,7 +75,9 @@ void RevisionHistoryPanel::setEmptyState(const QString &message)
     m_tree->addTopLevelItem(item);
     m_detail->clear();
     m_diff->clear();
+    m_compareView->clear();
     m_contentTabs->setTabEnabled(1, false);
+    m_contentTabs->setTabEnabled(2, false);
     m_contentTabs->setCurrentIndex(0);
     m_restoreButton->setEnabled(false);
 }
@@ -134,15 +140,23 @@ void RevisionHistoryPanel::refreshDetail()
             continue;
         m_detail->setPlainText(entry.content.trimmed());
         m_diff->setPlainText(entry.diffSummary.trimmed());
+        m_compareView->setComparison(entry.compareLeftTitle, entry.compareLeftContent,
+                                     entry.compareRightTitle, entry.compareRightContent);
         m_restoreButton->setEnabled(!entry.current && !entry.id.isEmpty());
         m_contentTabs->setTabEnabled(1, !entry.diffSummary.trimmed().isEmpty());
+        const bool hasCompare = !entry.compareLeftContent.isEmpty() || !entry.compareRightContent.isEmpty();
+        m_contentTabs->setTabEnabled(2, hasCompare);
         if (entry.diffSummary.trimmed().isEmpty() && m_contentTabs->currentIndex() == 1)
+            m_contentTabs->setCurrentIndex(0);
+        if (!hasCompare && m_contentTabs->currentIndex() == 2)
             m_contentTabs->setCurrentIndex(0);
         return;
     }
 
     m_detail->clear();
     m_diff->clear();
+    m_compareView->clear();
     m_contentTabs->setTabEnabled(1, false);
+    m_contentTabs->setTabEnabled(2, false);
     m_restoreButton->setEnabled(false);
 }

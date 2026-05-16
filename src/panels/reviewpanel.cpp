@@ -1,4 +1,5 @@
 #include "reviewpanel.h"
+#include "widgets/textcompareview.h"
 #include "wobjectimpl.h"
 
 #include <QAbstractItemView>
@@ -58,6 +59,9 @@ ReviewPanel::ReviewPanel(QWidget *parent)
     m_diffSummary->setPlaceholderText(QStringLiteral("差分の概要"));
     contentTabs->addTab(m_diffSummary, QStringLiteral("差分"));
 
+    m_compareView = new TextCompareView(contentTabs);
+    contentTabs->addTab(m_compareView, QStringLiteral("比較"));
+
     m_rawResponse = new QPlainTextEdit(contentTabs);
     m_rawResponse->setReadOnly(true);
     m_rawResponse->setPlaceholderText(QStringLiteral("AI 応答"));
@@ -89,6 +93,7 @@ void ReviewPanel::clearReview()
     m_actionList->clear();
     m_actionDetail->clear();
     m_diffSummary->clear();
+    m_compareView->clear();
     m_rawResponse->clear();
     m_applyButton->setEnabled(false);
     m_discardButton->setEnabled(false);
@@ -175,6 +180,7 @@ void ReviewPanel::refreshActionDetail()
     auto *item = m_actionList->currentItem();
     if (!item) {
         m_actionDetail->clear();
+        m_compareView->clear();
         return;
     }
 
@@ -182,10 +188,13 @@ void ReviewPanel::refreshActionDetail()
     if (index < 0 || index >= m_actions.size()) {
         m_actionDetail->clear();
         m_diffSummary->setPlainText(m_overallDiffSummary);
+        m_compareView->clear();
         return;
     }
 
     const auto &action = m_actions.at(index);
     m_actionDetail->setPlainText(action.detail.trimmed());
     m_diffSummary->setPlainText(action.diffSummary.trimmed().isEmpty() ? m_overallDiffSummary : action.diffSummary.trimmed());
+    m_compareView->setComparison(action.compareLeftTitle, action.compareLeftContent,
+                                 action.compareRightTitle, action.compareRightContent);
 }

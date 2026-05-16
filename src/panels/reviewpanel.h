@@ -13,6 +13,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QTabWidget;
 class QListWidgetItem;
+class TextCompareView;
 
 class ReviewPanel : public QWidget {
     W_OBJECT(ReviewPanel)
@@ -21,6 +22,10 @@ public:
         QString title;
         QString detail;
         QString diffSummary;
+        QString compareLeftTitle;
+        QString compareLeftContent;
+        QString compareRightTitle;
+        QString compareRightContent;
         bool checked = true;
     };
 
@@ -59,6 +64,7 @@ private:
     QListWidget *m_actionList = nullptr;
     QPlainTextEdit *m_actionDetail = nullptr;
     QPlainTextEdit *m_diffSummary = nullptr;
+    TextCompareView *m_compareView = nullptr;
     QPlainTextEdit *m_rawResponse = nullptr;
     QPushButton *m_applyButton = nullptr;
     QPushButton *m_discardButton = nullptr;

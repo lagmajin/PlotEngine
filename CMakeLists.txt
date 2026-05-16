@@ -33,6 +33,8 @@ add_executable(PlotEngine
     src/editor/noveleditor.cpp
     src/editor/syntaxhighlighter.h
     src/editor/syntaxhighlighter.cpp
+    src/widgets/textcompareview.h
+    src/widgets/textcompareview.cpp
     src/panels/structurepanel.h
     src/panels/structurepanel.cpp
     src/panels/notepanel.h

@@ -1803,6 +1803,10 @@ void MainWindow::refreshRevisionHistoryPanel()
         editor->property("isDirty").toBool() ? QStringLiteral("未保存") : QStringLiteral("現在"),
         editor->toPlainText(),
         QStringLiteral("現在のドラフトです。"),
+        QString(),
+        QString(),
+        QString(),
+        QString(),
         true
     });
 
@@ -1826,6 +1830,12 @@ void MainWindow::refreshRevisionHistoryPanel()
                 detail,
                 content,
                 diffSummary,
+                QStringLiteral("現在のドラフト"),
+                currentContent,
+                revision.timestamp.isValid()
+                    ? revision.timestamp.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                    : QStringLiteral("保存済み履歴"),
+                revision.content,
                 false
             });
         }
@@ -2578,10 +2588,19 @@ void MainWindow::polishCurrentEpisode()
                 if (!action.content.trimmed().isEmpty())
                     detail += "\n\n本文:\n" + action.content.left(4000);
                 QString actionDiff;
+                QString compareLeftTitle;
+                QString compareLeftContent;
+                QString compareRightTitle;
+                QString compareRightContent;
                 switch (action.type) {
                 case PlotEngine::AI::EditActionType::UpdateEpisodeContent: {
-                    if (const Episode *beforeEpisode = PlotEngine::Docs::findEpisodeById(m_project, action.chapterId, action.episodeId))
+                    if (const Episode *beforeEpisode = PlotEngine::Docs::findEpisodeById(m_project, action.chapterId, action.episodeId)) {
                         actionDiff = PlotEngine::AI::buildRevisionDiffSummary(beforeEpisode->content, action.content);
+                        compareLeftTitle = QStringLiteral("現在の本文");
+                        compareLeftContent = beforeEpisode->content;
+                        compareRightTitle = QStringLiteral("AI 提案本文");
+                        compareRightContent = action.content;
+                    }
                     break;
                 }
                 case PlotEngine::AI::EditActionType::UpdateEpisodeMetadata: {
@@ -2600,32 +2619,78 @@ void MainWindow::polishCurrentEpisode()
                         if (action.targetWordCount >= 0 && beforeEpisode->targetWordCount != action.targetWordCount)
                             lines.append(QStringLiteral("目標文字数: %1 -> %2").arg(beforeEpisode->targetWordCount).arg(action.targetWordCount));
                         actionDiff = lines.join('\n');
+                        compareLeftTitle = QStringLiteral("現在のメタデータ");
+                        compareLeftContent = QStringLiteral(
+                            "タイトル: %1\n要約: %2\nPOV: %3\n時間帯: %4\nシーン種別: %5\n感情強度: %6\n目標文字数: %7")
+                            .arg(beforeEpisode->title, beforeEpisode->summary, beforeEpisode->povCharacter,
+                                 beforeEpisode->timePeriod, beforeEpisode->sceneType)
+                            .arg(beforeEpisode->emotionalIntensity)
+                            .arg(beforeEpisode->targetWordCount);
+                        compareRightTitle = QStringLiteral("AI 提案メタデータ");
+                        compareRightContent = QStringLiteral(
+                            "タイトル: %1\n要約: %2\nPOV: %3\n時間帯: %4\nシーン種別: %5\n感情強度: %6\n目標文字数: %7")
+                            .arg(beforeEpisode->title,
+                                 action.summary.isEmpty() ? beforeEpisode->summary : action.summary,
+                                 action.povCharacter.isEmpty() ? beforeEpisode->povCharacter : action.povCharacter,
+                                 action.timePeriod.isEmpty() ? beforeEpisode->timePeriod : action.timePeriod,
+                                 action.sceneType.isEmpty() ? beforeEpisode->sceneType : action.sceneType)
+                            .arg(action.emotionalIntensity >= 0 ? action.emotionalIntensity : beforeEpisode->emotionalIntensity)
+                            .arg(action.targetWordCount >= 0 ? action.targetWordCount : beforeEpisode->targetWordCount);
                     }
                     break;
                 }
                 case PlotEngine::AI::EditActionType::RenameChapter: {
-                    if (const Chapter *beforeChapter = PlotEngine::Docs::findChapterById(m_project, action.chapterId))
+                    if (const Chapter *beforeChapter = PlotEngine::Docs::findChapterById(m_project, action.chapterId)) {
                         actionDiff = QStringLiteral("章名: %1 -> %2").arg(beforeChapter->title, action.title);
+                        compareLeftTitle = QStringLiteral("現在の章名");
+                        compareLeftContent = beforeChapter->title;
+                        compareRightTitle = QStringLiteral("AI 提案章名");
+                        compareRightContent = action.title;
+                    }
                     break;
                 }
                 case PlotEngine::AI::EditActionType::RenameEpisode: {
-                    if (const Episode *beforeEpisode = PlotEngine::Docs::findEpisodeById(m_project, action.chapterId, action.episodeId))
+                    if (const Episode *beforeEpisode = PlotEngine::Docs::findEpisodeById(m_project, action.chapterId, action.episodeId)) {
                         actionDiff = QStringLiteral("エピソード名: %1 -> %2").arg(beforeEpisode->title, action.title);
+                        compareLeftTitle = QStringLiteral("現在のエピソード名");
+                        compareLeftContent = beforeEpisode->title;
+                        compareRightTitle = QStringLiteral("AI 提案エピソード名");
+                        compareRightContent = action.title;
+                    }
                     break;
                 }
                 case PlotEngine::AI::EditActionType::UpdateCharacterNotes: {
-                    if (const CharacterEntry *beforeCharacter = PlotEngine::Docs::findCharacterById(m_project, action.characterId))
+                    if (const CharacterEntry *beforeCharacter = PlotEngine::Docs::findCharacterById(m_project, action.characterId)) {
                         actionDiff = PlotEngine::AI::buildRevisionDiffSummary(beforeCharacter->notes, action.notes);
+                        compareLeftTitle = QStringLiteral("現在のキャラノート");
+                        compareLeftContent = beforeCharacter->notes;
+                        compareRightTitle = QStringLiteral("AI 提案キャラノート");
+                        compareRightContent = action.notes;
+                    }
                     break;
                 }
                 case PlotEngine::AI::EditActionType::UpdateLocationNotes: {
-                    if (const LocationEntry *beforeLocation = PlotEngine::Docs::findLocationById(m_project, action.locationId))
+                    if (const LocationEntry *beforeLocation = PlotEngine::Docs::findLocationById(m_project, action.locationId)) {
                         actionDiff = PlotEngine::AI::buildRevisionDiffSummary(beforeLocation->notes, action.notes);
+                        compareLeftTitle = QStringLiteral("現在の場所ノート");
+                        compareLeftContent = beforeLocation->notes;
+                        compareRightTitle = QStringLiteral("AI 提案場所ノート");
+                        compareRightContent = action.notes;
+                    }
                     break;
                 }
                 }
 
-                actionItems.append({summaryLine, detail, actionDiff, true});
+                actionItems.append({
+                    summaryLine,
+                    detail,
+                    actionDiff,
+                    compareLeftTitle,
+                    compareLeftContent,
+                    compareRightTitle,
+                    compareRightContent,
+                    true
+                });
             }
 
             m_pendingReviewChapterId = chapterId;

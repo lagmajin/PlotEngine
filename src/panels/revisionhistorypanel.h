@@ -13,6 +13,7 @@ class QPushButton;
 class QTabWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
+class TextCompareView;
 
 class RevisionHistoryPanel : public QWidget {
     W_OBJECT(RevisionHistoryPanel)
@@ -23,6 +24,10 @@ public:
         QString detail;
         QString content;
         QString diffSummary;
+        QString compareLeftTitle;
+        QString compareLeftContent;
+        QString compareRightTitle;
+        QString compareRightContent;
         bool current = false;
     };
 
@@ -52,6 +57,7 @@ private:
     QTabWidget *m_contentTabs = nullptr;
     QPlainTextEdit *m_detail = nullptr;
     QPlainTextEdit *m_diff = nullptr;
+    TextCompareView *m_compareView = nullptr;
     QPushButton *m_restoreButton = nullptr;
     QVector<Entry> m_entries;
 };
