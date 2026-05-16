@@ -153,6 +153,8 @@ private:
     void floatDockPane(ads::CDockWidget *dock);
     void showAllDockPanes();
     void resetDockLayout();
+    void setFocusMode(bool enabled);
+    void toggleFocusMode();
     void storeAiEditSnapshot(const QString &label);
     void clearAiEditSnapshot();
     void refreshRevisionHistoryPanel();
@@ -197,6 +199,7 @@ private:
     ads::CDockWidget *m_protectedSnippetDock = nullptr;
     ads::CDockWidget *m_sceneBoardDock = nullptr;
     ads::CDockWidget *m_editorDock = nullptr;
+    QAction *m_focusModeAction = nullptr;
     QStackedWidget *m_centerStack = nullptr;
     QWidget *m_welcomePage = nullptr;
     QPushButton *m_welcomeNewProjectButton = nullptr;
@@ -216,4 +219,6 @@ private:
     QString m_pendingReviewCurrentText;
     QString m_pendingReviewAiModel;
     QHash<QString, QVector<ProtectedSnippetRecord>> m_protectedSnippetsByDocument;
+    bool m_focusModeEnabled = false;
+    QHash<ads::CDockWidget*, bool> m_focusModeVisibilitySnapshot;
 };

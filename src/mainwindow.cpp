@@ -50,6 +50,7 @@
 #include <QHBoxLayout>
 #include <QPlainTextEdit>
 #include <QVector>
+#include <QList>
 
 import PlotEngine.Core.ProjectManager;
 import PlotEngine.Core.DocumentCommands;
@@ -455,6 +456,8 @@ void MainWindow::setupToolBar()
     toolbar->addAction(appIcon("quick-open"), "Quick Open", this, &MainWindow::quickOpen);
     toolbar->addAction(appIcon("project-search"), "Search", this, &MainWindow::projectSearch);
     toolbar->addAction(appIcon("command-palette"), "Command Palette", this, &MainWindow::commandPalette);
+    if (m_focusModeAction)
+        toolbar->addAction(m_focusModeAction);
     toolbar->addSeparator();
     toolbar->addAction(appIcon("add-chapter"), "章追加", this, &MainWindow::addChapter);
     toolbar->addAction(appIcon("add-episode"), "エピソード追加", this, [this]() {
@@ -627,7 +630,15 @@ void MainWindow::setupDockViewMenu(QMenu *viewMenu)
     viewMenu->addSeparator();
     viewMenu->addAction(appIcon("explorer"), "全ペインを表示", this, &MainWindow::showAllDockPanes);
     viewMenu->addAction(appIcon("editor"), "ドックレイアウトを初期化", this, &MainWindow::resetDockLayout);
-
+    if (!m_focusModeAction) {
+        m_focusModeAction = new QAction(appIcon("editor"), "集中執筆モード", this);
+        m_focusModeAction->setCheckable(true);
+        m_focusModeAction->setShortcut(QKeySequence("F11"));
+        connect(m_focusModeAction, &QAction::triggered, this, [this]() {
+            toggleFocusMode();
+        });
+    }
+    viewMenu->addAction(m_focusModeAction);
     auto *floatMenu = viewMenu->addMenu(appIcon("quick-open"), "フローティング表示");
     floatMenu->addAction(appIcon("explorer"), "エクスプローラを浮かせる", this, [this]() {
         floatDockPane(m_structureDock);
@@ -683,6 +694,7 @@ void MainWindow::showAllDockPanes()
     showDockPane(m_reviewDock);
     showDockPane(m_revisionHistoryDock);
     showDockPane(m_protectedSnippetDock);
+    showDockPane(m_sceneBoardDock);
     showDockPane(m_editorDock);
 }
 
@@ -691,8 +703,53 @@ void MainWindow::resetDockLayout()
     if (!m_dockManager || m_defaultDockState.isEmpty())
         return;
 
+    setFocusMode(false);
     m_dockManager->restoreState(m_defaultDockState, 1);
     showAllDockPanes();
+}
+
+void MainWindow::setFocusMode(bool enabled)
+{
+    if (m_focusModeEnabled == enabled)
+        return;
+
+    m_focusModeEnabled = enabled;
+    if (m_focusModeAction)
+        m_focusModeAction->setChecked(enabled);
+
+    if (!m_dockManager)
+        return;
+
+    if (enabled) {
+        m_focusModeVisibilitySnapshot.clear();
+        const QList<ads::CDockWidget*> docks = {
+            m_structureDock, m_noteDock, m_searchDock, m_reviewDock,
+            m_revisionHistoryDock, m_protectedSnippetDock, m_sceneBoardDock
+        };
+        for (auto *dock : docks) {
+            if (!dock)
+                continue;
+            m_focusModeVisibilitySnapshot.insert(dock, dock->toggleViewAction() && dock->toggleViewAction()->isChecked());
+            dock->toggleView(false);
+        }
+        if (m_editorDock)
+            m_editorDock->toggleView(true);
+        showEditorWorkspace();
+        return;
+    }
+
+    for (auto it = m_focusModeVisibilitySnapshot.begin(); it != m_focusModeVisibilitySnapshot.end(); ++it) {
+        if (!it.key())
+            continue;
+        it.key()->toggleView(it.value());
+    }
+    m_focusModeVisibilitySnapshot.clear();
+    refreshWorkspaceView();
+}
+
+void MainWindow::toggleFocusMode()
+{
+    setFocusMode(!m_focusModeEnabled);
 }
 
 void MainWindow::setupStatusBar()
@@ -2883,6 +2940,7 @@ void MainWindow::addLocation()
 
 void MainWindow::setCurrentProject(const NovelProject &project)
 {
+    setFocusMode(false);
     m_project = project;
     m_protectedSnippetsByDocument.clear();
     clearAiEditSnapshot();
