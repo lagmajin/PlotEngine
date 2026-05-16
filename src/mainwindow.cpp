@@ -9,6 +9,7 @@
 #include "panels/searchpanel.h"
 #include "panels/structurepanel.h"
 #include "panels/protectedsnippetpanel.h"
+#include "panels/sceneboardpanel.h"
 #include "wobjectimpl.h"
 #include <QAction>
 #include <QFileDialog>
@@ -564,6 +565,7 @@ void MainWindow::setupEditorTabs()
         updateBreadcrumbStatus();
         refreshRevisionHistoryPanel();
         refreshProtectedSnippetPanel();
+        refreshSceneBoardPanel();
         refreshWorkspaceView();
     });
 }
@@ -593,6 +595,10 @@ void MainWindow::setupDockWidgets()
     m_protectedSnippetPanel = new ProtectedSnippetPanel(this);
     m_protectedSnippetDock = createDockPane(m_dockManager, ProtectedSnippetPanel::dockSpec(), m_protectedSnippetPanel);
     m_protectedSnippetDock->setIcon(appIcon("notes"));
+
+    m_sceneBoardPanel = new SceneBoardPanel(this);
+    m_sceneBoardDock = createDockPane(m_dockManager, SceneBoardPanel::dockSpec(), m_sceneBoardPanel);
+    m_sceneBoardDock->setIcon(appIcon("structure"));
 }
 
 void MainWindow::setupDockViewMenu(QMenu *viewMenu)
@@ -606,6 +612,7 @@ void MainWindow::setupDockViewMenu(QMenu *viewMenu)
     m_reviewDock->toggleViewAction()->setIcon(appIcon("polish"));
     m_revisionHistoryDock->toggleViewAction()->setIcon(appIcon("recent"));
     m_protectedSnippetDock->toggleViewAction()->setIcon(appIcon("notes"));
+    m_sceneBoardDock->toggleViewAction()->setIcon(appIcon("structure"));
     m_editorDock->toggleViewAction()->setIcon(appIcon("editor"));
 
     viewMenu->addAction(m_structureDock->toggleViewAction());
@@ -614,6 +621,7 @@ void MainWindow::setupDockViewMenu(QMenu *viewMenu)
     viewMenu->addAction(m_reviewDock->toggleViewAction());
     viewMenu->addAction(m_revisionHistoryDock->toggleViewAction());
     viewMenu->addAction(m_protectedSnippetDock->toggleViewAction());
+    viewMenu->addAction(m_sceneBoardDock->toggleViewAction());
     viewMenu->addAction(m_editorDock->toggleViewAction());
 
     viewMenu->addSeparator();
@@ -638,6 +646,9 @@ void MainWindow::setupDockViewMenu(QMenu *viewMenu)
     });
     floatMenu->addAction(appIcon("notes"), "保護ブロックを浮かせる", this, [this]() {
         floatDockPane(m_protectedSnippetDock);
+    });
+    floatMenu->addAction(appIcon("structure"), "Scene Cards を浮かせる", this, [this]() {
+        floatDockPane(m_sceneBoardDock);
     });
     floatMenu->addAction(appIcon("editor"), "エディタを浮かせる", this, [this]() {
         floatDockPane(m_editorDock);
@@ -731,6 +742,17 @@ void MainWindow::connectSignals()
             this, &MainWindow::removeProtectedSnippet);
     connect(m_protectedSnippetPanel, &ProtectedSnippetPanel::clearSnippetsRequested,
             this, &MainWindow::clearProtectedSnippets);
+    connect(m_sceneBoardPanel, &SceneBoardPanel::episodeSelected,
+            this, &MainWindow::onEpisodeSelected);
+    connect(m_sceneBoardPanel, &SceneBoardPanel::episodeOrderChanged,
+            this, [this](const QString &chapterId, const QStringList &orderedEpisodeIds) {
+                if (!PlotEngine::Docs::reorderEpisodes(m_project, chapterId, orderedEpisodeIds)) {
+                    refreshSceneBoardPanel();
+                    return;
+                }
+                markAllTabsDirty();
+                refreshProjectViews();
+            });
 }
 
 void MainWindow::quickOpen()
@@ -1291,6 +1313,7 @@ void MainWindow::onEpisodeSelected(const QString &chapterId, const QString &epis
         if (editor && editor->sceneId() == episodeId) {
             m_editorTabs->setCurrentIndex(i);
             refreshRevisionHistoryPanel();
+            refreshSceneBoardPanel();
             return;
         }
     }
@@ -1328,6 +1351,7 @@ void MainWindow::onEpisodeSelected(const QString &chapterId, const QString &epis
     updateCursorStatus();
     updateBreadcrumbStatus();
     refreshRevisionHistoryPanel();
+    refreshSceneBoardPanel();
 }
 
 void MainWindow::onCharacterSelected(const QString &characterId)
@@ -1375,6 +1399,7 @@ void MainWindow::onCharacterSelected(const QString &characterId)
     updateCursorStatus();
     updateBreadcrumbStatus();
     refreshRevisionHistoryPanel();
+    refreshSceneBoardPanel();
 }
 
 void MainWindow::onLocationSelected(const QString &locationId)
@@ -1491,6 +1516,7 @@ void MainWindow::refreshProjectViews()
         m_notePanel->loadProject(m_project);
     if (m_searchPanel)
         m_searchPanel->loadProject(m_project);
+    refreshSceneBoardPanel();
     syncOpenDocumentTabs();
     updateStatusBar();
     refreshRevisionHistoryPanel();
@@ -1925,6 +1951,30 @@ void MainWindow::refreshProtectedSnippetPanel()
     }
     m_protectedSnippetPanel->setSnippets(snippets);
     editor->setProtectedSnippets(protectedSnippets);
+}
+
+void MainWindow::refreshSceneBoardPanel()
+{
+    if (!m_sceneBoardPanel)
+        return;
+
+    m_sceneBoardPanel->loadProject(m_project);
+
+    if (!m_editorTabs)
+        return;
+
+    auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+    if (!editor)
+        return;
+
+    const QString kind = editor->property("documentKind").toString();
+    if (kind != "episode")
+        return;
+
+    const QString episodeId = editor->property("documentId").toString();
+    const QString chapterId = editor->property("chapterId").toString();
+    if (!chapterId.isEmpty() && !episodeId.isEmpty())
+        m_sceneBoardPanel->setCurrentEpisode(chapterId, episodeId);
 }
 
 void MainWindow::addProtectedSnippetFromSelection()

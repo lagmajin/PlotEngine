@@ -35,6 +35,7 @@ class SearchPanel;
 class ReviewPanel;
 class RevisionHistoryPanel;
 class ProtectedSnippetPanel;
+class SceneBoardPanel;
 
 class MainWindow : public QMainWindow {
     W_OBJECT(MainWindow)
@@ -165,6 +166,7 @@ private:
                                             const QString &notes,
                                             const QString &aiModel = QString());
     void refreshProtectedSnippetPanel();
+    void refreshSceneBoardPanel();
     void syncProtectedSnippetsFromEditor(NovelEditor *editor);
     QString currentDocumentProtectionKey() const;
     QString protectionKey(const QString &kind, const QString &id) const;
@@ -186,12 +188,14 @@ private:
     ReviewPanel *m_reviewPanel = nullptr;
     RevisionHistoryPanel *m_revisionHistoryPanel = nullptr;
     ProtectedSnippetPanel *m_protectedSnippetPanel = nullptr;
+    SceneBoardPanel *m_sceneBoardPanel = nullptr;
     ads::CDockWidget *m_structureDock = nullptr;
     ads::CDockWidget *m_noteDock = nullptr;
     ads::CDockWidget *m_searchDock = nullptr;
     ads::CDockWidget *m_reviewDock = nullptr;
     ads::CDockWidget *m_revisionHistoryDock = nullptr;
     ads::CDockWidget *m_protectedSnippetDock = nullptr;
+    ads::CDockWidget *m_sceneBoardDock = nullptr;
     ads::CDockWidget *m_editorDock = nullptr;
     QStackedWidget *m_centerStack = nullptr;
     QWidget *m_welcomePage = nullptr;

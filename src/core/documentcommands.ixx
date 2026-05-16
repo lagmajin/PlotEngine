@@ -2,6 +2,8 @@ module;
 
 #include <QDateTime>
 #include <QString>
+#include <QStringList>
+#include <QSet>
 #include <QUuid>
 
 export module PlotEngine.Core.DocumentCommands;
@@ -29,6 +31,7 @@ bool renameChapter(NovelProject &project, const QString &chapterId, const QStrin
 bool renameEpisode(NovelProject &project, const QString &chapterId, const QString &episodeId, const QString &title);
 QString addChapter(NovelProject &project, QString *createdEpisodeId = nullptr);
 QString addEpisode(NovelProject &project, const QString &chapterId);
+bool reorderEpisodes(NovelProject &project, const QString &chapterId, const QStringList &orderedEpisodeIds);
 
 }
 
@@ -228,6 +231,37 @@ QString addEpisode(NovelProject &project, const QString &chapterId)
     const QString createdEpisodeId = episode.id;
     chapter->episodes.append(episode);
     return createdEpisodeId;
+}
+
+bool reorderEpisodes(NovelProject &project, const QString &chapterId, const QStringList &orderedEpisodeIds)
+{
+    Chapter *chapter = findChapterById(project, chapterId);
+    if (!chapter)
+        return false;
+
+    if (orderedEpisodeIds.isEmpty() || chapter->episodes.size() != orderedEpisodeIds.size())
+        return false;
+
+    QVector<Episode> reordered;
+    reordered.reserve(chapter->episodes.size());
+    QSet<QString> seen;
+
+    for (const auto &episodeId : orderedEpisodeIds) {
+        if (seen.contains(episodeId))
+            return false;
+        seen.insert(episodeId);
+        auto it = std::find_if(chapter->episodes.begin(), chapter->episodes.end(),
+            [&](const Episode &episode) { return episode.id == episodeId; });
+        if (it == chapter->episodes.end())
+            return false;
+        reordered.append(*it);
+    }
+
+    if (reordered.size() != chapter->episodes.size())
+        return false;
+
+    chapter->episodes = std::move(reordered);
+    return true;
 }
 
 }

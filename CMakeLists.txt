@@ -47,6 +47,8 @@ add_executable(PlotEngine
     src/panels/revisionhistorypanel.cpp
     src/panels/protectedsnippetpanel.h
     src/panels/protectedsnippetpanel.cpp
+    src/panels/sceneboardpanel.h
+    src/panels/sceneboardpanel.cpp
     src/core/novelproject.h
     src/core/novelproject.cpp
     src/core/projectmanager.h
