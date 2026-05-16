@@ -40,6 +40,9 @@
 #include <QMenu>
 #include <QSettings>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStringList>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -239,6 +242,80 @@ QString documentTitleForProject(const NovelProject &project, const QString &kind
         }
     }
     return QString();
+}
+
+QString protectedSnippetStorePath(const QString &projectPath)
+{
+    return projectPath.isEmpty() ? QString() : projectPath + QStringLiteral(".protected.json");
+}
+
+QHash<QString, QVector<MainWindow::ProtectedSnippetRecord>> loadProtectedSnippetStore(const QString &projectPath)
+{
+    QHash<QString, QVector<MainWindow::ProtectedSnippetRecord>> result;
+    const QString path = protectedSnippetStorePath(projectPath);
+    if (path.isEmpty() || !QFileInfo::exists(path))
+        return result;
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return result;
+
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isObject())
+        return result;
+
+    const QJsonObject root = doc.object();
+    for (auto it = root.begin(); it != root.end(); ++it) {
+        if (!it.value().isArray())
+            continue;
+        QVector<MainWindow::ProtectedSnippetRecord> records;
+        for (const auto &entry : it.value().toArray()) {
+            if (!entry.isObject())
+                continue;
+            const QJsonObject obj = entry.toObject();
+            const QString text = obj.value(QStringLiteral("text")).toString();
+            if (text.trimmed().isEmpty())
+                continue;
+            records.append({
+                obj.value(QStringLiteral("label")).toString(),
+                text
+            });
+        }
+        if (!records.isEmpty())
+            result.insert(it.key(), records);
+    }
+
+    return result;
+}
+
+bool saveProtectedSnippetStore(const QString &projectPath,
+                               const QHash<QString, QVector<MainWindow::ProtectedSnippetRecord>> &store)
+{
+    const QString path = protectedSnippetStorePath(projectPath);
+    if (path.isEmpty())
+        return false;
+
+    QJsonObject root;
+    for (auto it = store.begin(); it != store.end(); ++it) {
+        QJsonArray snippets;
+        for (const auto &record : it.value()) {
+            if (record.text.trimmed().isEmpty())
+                continue;
+            QJsonObject obj;
+            obj[QStringLiteral("label")] = record.label;
+            obj[QStringLiteral("text")] = record.text;
+            snippets.append(obj);
+        }
+        if (!snippets.isEmpty())
+            root[it.key()] = snippets;
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return false;
+
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    return true;
 }
 
 }
@@ -1137,8 +1214,10 @@ void MainWindow::openProjectFile(const QString &path)
     }
 
     setCurrentProject(*result);
+    m_protectedSnippetsByDocument = loadProtectedSnippetStore(result->filePath);
     markAllTabsClean();
     refreshProjectViews();
+    refreshProtectedSnippetPanel();
     addRecentProject(path);
     if (!m_loadingSession)
         openFirstEpisodeIfAny();
@@ -1150,6 +1229,10 @@ bool MainWindow::saveProject()
     if (m_project.filePath.isEmpty())
         return saveProjectAs();
     bool ok = ProjectManager::save(m_project, m_project.filePath);
+    if (ok && !saveProtectedSnippetStore(m_project.filePath, m_protectedSnippetsByDocument)) {
+        QMessageBox::warning(this, "保存エラー", "保護ブロック設定の保存に失敗しました。");
+        ok = false;
+    }
     if (ok) {
         markAllTabsClean();
         recordAllEpisodeRevisions(static_cast<int>(PlotEngine::Revisions::RevisionType::ManualEdit), QStringLiteral("プロジェクト保存"));
@@ -1174,6 +1257,12 @@ bool MainWindow::saveProjectAs()
     bool ok = ProjectManager::save(m_project, path);
     if (ok) {
         m_project.filePath = path;
+        if (!saveProtectedSnippetStore(m_project.filePath, m_protectedSnippetsByDocument)) {
+            QMessageBox::warning(this, "保存エラー", "保護ブロック設定の保存に失敗しました。");
+            ok = false;
+        }
+    }
+    if (ok) {
         markAllTabsClean();
         addRecentProject(path);
         recordAllEpisodeRevisions(static_cast<int>(PlotEngine::Revisions::RevisionType::ManualEdit), QStringLiteral("プロジェクト保存"));
@@ -1839,6 +1928,8 @@ void MainWindow::addProtectedSnippetFromSelection()
 
     m_protectedSnippetsByDocument[key].append({label, selectedText});
     refreshProtectedSnippetPanel();
+    markDocumentDirty(editor);
+    updateStatusBar();
     showDockPane(m_protectedSnippetDock);
 }
 
@@ -1847,6 +1938,7 @@ void MainWindow::removeProtectedSnippet(int index)
     const QString key = currentDocumentProtectionKey();
     if (key.isEmpty() || !m_protectedSnippetsByDocument.contains(key))
         return;
+    auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
 
     auto &records = m_protectedSnippetsByDocument[key];
     if (index < 0 || index >= records.size())
@@ -1856,6 +1948,8 @@ void MainWindow::removeProtectedSnippet(int index)
     if (records.isEmpty())
         m_protectedSnippetsByDocument.remove(key);
     refreshProtectedSnippetPanel();
+    markDocumentDirty(editor);
+    updateStatusBar();
 }
 
 void MainWindow::clearProtectedSnippets()
@@ -1863,9 +1957,12 @@ void MainWindow::clearProtectedSnippets()
     const QString key = currentDocumentProtectionKey();
     if (key.isEmpty())
         return;
+    auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
 
     m_protectedSnippetsByDocument.remove(key);
     refreshProtectedSnippetPanel();
+    markDocumentDirty(editor);
+    updateStatusBar();
 }
 
 void MainWindow::recordEpisodeRevision(const QString &episodeId, const QString &content,

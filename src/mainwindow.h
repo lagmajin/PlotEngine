@@ -39,6 +39,11 @@ class ProtectedSnippetPanel;
 class MainWindow : public QMainWindow {
     W_OBJECT(MainWindow)
 public:
+    struct ProtectedSnippetRecord {
+        QString label;
+        QString text;
+    };
+
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
@@ -160,11 +165,6 @@ private:
     void refreshProtectedSnippetPanel();
     QString currentDocumentProtectionKey() const;
     QString protectionKey(const QString &kind, const QString &id) const;
-
-    struct ProtectedSnippetRecord {
-        QString label;
-        QString text;
-    };
 
     NovelProject *m_projectData = nullptr;
     bool m_dirty = false;
