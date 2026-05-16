@@ -17,6 +17,11 @@
 #include <QTextDocument>
 #include <QTextFormat>
 #include <QTextEdit>
+#include <QApplication>
+#include <QAction>
+#include <QMenu>
+#include <QMimeData>
+#include <QKeySequence>
 #include <algorithm>
 #include <QVBoxLayout>
 
@@ -402,7 +407,84 @@ void NovelEditor::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    const QTextCursor cursor = textCursor();
+    const bool selectionBlocked = selectionIntersectsProtected(cursor);
+    const bool cursorBlocked = cursorIsInsideProtected(cursor.position());
+
+    if (event->matches(QKeySequence::Cut)) {
+        if (selectionBlocked || cursorBlocked) {
+            notifyProtectedEditBlocked();
+            event->accept();
+            return;
+        }
+    }
+
+    if (event->key() == Qt::Key_Backspace) {
+        if (selectionBlocked || cursorTouchesProtectedForDelete(cursor.position(), -1)) {
+            notifyProtectedEditBlocked();
+            event->accept();
+            return;
+        }
+    }
+
+    if (event->key() == Qt::Key_Delete) {
+        if (selectionBlocked || cursorTouchesProtectedForDelete(cursor.position(), 1)) {
+            notifyProtectedEditBlocked();
+            event->accept();
+            return;
+        }
+    }
+
+    const QString inputText = event->text();
+    if (!inputText.isEmpty() && !event->matches(QKeySequence::Paste)) {
+        if (selectionBlocked || cursorBlocked) {
+            notifyProtectedEditBlocked();
+            event->accept();
+            return;
+        }
+    }
+
     QPlainTextEdit::keyPressEvent(event);
+}
+
+void NovelEditor::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!isProtectedEditContext()) {
+        QPlainTextEdit::contextMenuEvent(event);
+        return;
+    }
+
+    QMenu *menu = createStandardContextMenu();
+    if (!menu) {
+        QPlainTextEdit::contextMenuEvent(event);
+        return;
+    }
+
+    for (QAction *action : menu->actions()) {
+        if (!action)
+            continue;
+
+        const QString text = action->text().toLower();
+        const bool isCut = action->shortcut() == QKeySequence::Cut || text.contains("cut") || text.contains("切り取り");
+        const bool isPaste = action->shortcut() == QKeySequence::Paste || text.contains("paste") || text.contains("貼り付け");
+        const bool isDelete = text.contains("delete") || text.contains("削除");
+        if (isCut || isPaste || isDelete)
+            action->setEnabled(false);
+    }
+
+    menu->exec(event->globalPos());
+    delete menu;
+}
+
+void NovelEditor::insertFromMimeData(const QMimeData *source)
+{
+    const QTextCursor cursor = textCursor();
+    if (selectionIntersectsProtected(cursor) || cursorIsInsideProtected(cursor.position())) {
+        notifyProtectedEditBlocked();
+        return;
+    }
+
+    QPlainTextEdit::insertFromMimeData(source);
 }
 
 void NovelEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
@@ -541,6 +623,58 @@ void NovelEditor::updateSearchHighlights()
     setExtraSelections(selections);
 }
 
+bool NovelEditor::selectionIntersectsProtected(const QTextCursor &cursor) const
+{
+    if (!cursor.hasSelection())
+        return false;
+
+    const int start = cursor.selectionStart();
+    const int end = cursor.selectionEnd();
+    for (const auto &snippet : m_protectedSnippets) {
+        const int snippetStart = snippet.start;
+        const int snippetEnd = snippet.start + snippet.length;
+        if (start < snippetEnd && end > snippetStart)
+            return true;
+    }
+    return false;
+}
+
+bool NovelEditor::cursorTouchesProtectedForDelete(int position, int charsRemoved) const
+{
+    if (position < 0)
+        return false;
+
+    if (charsRemoved < 0) {
+        const int deletePos = position - 1;
+        for (const auto &snippet : m_protectedSnippets) {
+            if (deletePos >= snippet.start && deletePos < snippet.start + snippet.length)
+                return true;
+        }
+    } else if (charsRemoved > 0) {
+        for (const auto &snippet : m_protectedSnippets) {
+            if (position >= snippet.start && position < snippet.start + snippet.length)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+bool NovelEditor::cursorIsInsideProtected(int position) const
+{
+    for (const auto &snippet : m_protectedSnippets) {
+        if (position > snippet.start && position < snippet.start + snippet.length)
+            return true;
+    }
+    return false;
+}
+
+bool NovelEditor::isProtectedEditContext() const
+{
+    const QTextCursor cursor = textCursor();
+    return selectionIntersectsProtected(cursor) || cursorIsInsideProtected(cursor.position());
+}
+
 QString NovelEditor::textForRange(int start, int length) const
 {
     if (start < 0 || length <= 0)
@@ -588,6 +722,11 @@ void NovelEditor::normalizeProtectedSnippets()
                 return snippet.start < 0 || snippet.length <= 0 || snippet.text.trimmed().isEmpty();
             }),
         m_protectedSnippets.end());
+}
+
+void NovelEditor::notifyProtectedEditBlocked() const
+{
+    QApplication::beep();
 }
 
 QTextDocument::FindFlags NovelEditor::searchFlags() const

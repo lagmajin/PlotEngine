@@ -8,6 +8,8 @@
 #include <QResizeEvent>
 #include <QPaintEvent>
 #include <QKeyEvent>
+#include <QMimeData>
+#include <QContextMenuEvent>
 #include "wobjectdefs.h"
 
 class QLineEdit;
@@ -53,6 +55,8 @@ public:
 protected:
     void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+    void insertFromMimeData(const QMimeData *source) override;
 
 private:
     void onTextChanged();
@@ -90,8 +94,13 @@ private:
     void updateSearchHighlights();
     int countSearchHits(const QString &text) const;
     QTextDocument::FindFlags searchFlags() const;
+    bool selectionIntersectsProtected(const QTextCursor &cursor) const;
+    bool cursorTouchesProtectedForDelete(int position, int charsRemoved) const;
+    bool cursorIsInsideProtected(int position) const;
+    bool isProtectedEditContext() const;
     QString textForRange(int start, int length) const;
     void normalizeProtectedSnippets();
+    void notifyProtectedEditBlocked() const;
 
     QString m_sceneId;
     SyntaxHighlighter *m_highlighter = nullptr;
