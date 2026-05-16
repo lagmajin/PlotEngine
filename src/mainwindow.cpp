@@ -278,7 +278,9 @@ QHash<QString, QVector<MainWindow::ProtectedSnippetRecord>> loadProtectedSnippet
                 continue;
             records.append({
                 obj.value(QStringLiteral("label")).toString(),
-                text
+                text,
+                obj.contains(QStringLiteral("start")) ? obj.value(QStringLiteral("start")).toInt(-1) : -1,
+                obj.contains(QStringLiteral("length")) ? obj.value(QStringLiteral("length")).toInt(static_cast<int>(text.size())) : static_cast<int>(text.size())
             });
         }
         if (!records.isEmpty())
@@ -304,6 +306,10 @@ bool saveProtectedSnippetStore(const QString &projectPath,
             QJsonObject obj;
             obj[QStringLiteral("label")] = record.label;
             obj[QStringLiteral("text")] = record.text;
+            if (record.start >= 0)
+                obj[QStringLiteral("start")] = record.start;
+            if (record.length > 0)
+                obj[QStringLiteral("length")] = record.length;
             snippets.append(obj);
         }
         if (!snippets.isEmpty())
@@ -1309,6 +1315,13 @@ void MainWindow::onEpisodeSelected(const QString &chapterId, const QString &epis
             updateStatusBar();
             refreshRevisionHistoryPanel();
         });
+    connect(editor, &NovelEditor::protectedSnippetsEdited, this,
+        [this, editor]() {
+            syncProtectedSnippetsFromEditor(editor);
+            refreshProtectedSnippetPanel();
+            markDocumentDirty(editor);
+            updateStatusBar();
+        });
     connect(editor, &QPlainTextEdit::cursorPositionChanged,
             this, &MainWindow::updateCursorStatus);
     refreshExplorerOpenDocuments();
@@ -1349,6 +1362,13 @@ void MainWindow::onCharacterSelected(const QString &characterId)
             markDocumentDirty(editor);
             updateStatusBar();
         });
+    connect(editor, &NovelEditor::protectedSnippetsEdited, this,
+        [this, editor]() {
+            syncProtectedSnippetsFromEditor(editor);
+            refreshProtectedSnippetPanel();
+            markDocumentDirty(editor);
+            updateStatusBar();
+        });
     connect(editor, &QPlainTextEdit::cursorPositionChanged,
             this, &MainWindow::updateCursorStatus);
     refreshExplorerOpenDocuments();
@@ -1386,6 +1406,13 @@ void MainWindow::onLocationSelected(const QString &locationId)
         [this, editor, locationId](const QString &text) {
             if (LocationEntry *locationEntry = PlotEngine::Docs::findLocationById(m_project, locationId))
                 locationEntry->notes = text;
+            markDocumentDirty(editor);
+            updateStatusBar();
+        });
+    connect(editor, &NovelEditor::protectedSnippetsEdited, this,
+        [this, editor]() {
+            syncProtectedSnippetsFromEditor(editor);
+            refreshProtectedSnippetPanel();
             markDocumentDirty(editor);
             updateStatusBar();
         });
@@ -1887,17 +1914,17 @@ void MainWindow::refreshProtectedSnippetPanel()
 
     m_protectedSnippetPanel->setDocumentTitle(title);
 
-    QVector<ProtectedSnippetPanel::Snippet> snippets;
-    QStringList protectedTexts;
     const auto records = m_protectedSnippetsByDocument.value(protectionKey(kind, id));
+    QVector<ProtectedSnippetPanel::Snippet> snippets;
+    QVector<NovelEditor::ProtectedSnippet> protectedSnippets;
     snippets.reserve(records.size());
+    protectedSnippets.reserve(records.size());
     for (const auto &record : records) {
         snippets.append({record.label, record.text});
-        if (!record.text.trimmed().isEmpty())
-            protectedTexts.append(record.text);
+        protectedSnippets.append({record.label, record.text, record.start, record.length});
     }
     m_protectedSnippetPanel->setSnippets(snippets);
-    editor->setProtectedSnippets(protectedTexts);
+    editor->setProtectedSnippets(protectedSnippets);
 }
 
 void MainWindow::addProtectedSnippetFromSelection()
@@ -1908,11 +1935,11 @@ void MainWindow::addProtectedSnippetFromSelection()
         return;
     }
 
-    QString selectedText = editor->textCursor().selectedText();
+    const QTextCursor selection = editor->textCursor();
+    QString selectedText = selection.selectedText();
     selectedText.replace(QChar(0x2029), '\n');
     selectedText.replace(QChar(0x2028), '\n');
-    selectedText = selectedText.trimmed();
-    if (selectedText.isEmpty()) {
+    if (selectedText.trimmed().isEmpty()) {
         QMessageBox::information(this, "保護ブロック", "追加するには本文を選択してください。");
         return;
     }
@@ -1936,8 +1963,14 @@ void MainWindow::addProtectedSnippetFromSelection()
     if (key.isEmpty())
         return;
 
-    m_protectedSnippetsByDocument[key].append({label, selectedText});
+    m_protectedSnippetsByDocument[key].append({
+        label,
+        selectedText,
+        selection.selectionStart(),
+        selection.selectionEnd() - selection.selectionStart()
+    });
     refreshProtectedSnippetPanel();
+    syncProtectedSnippetsFromEditor(editor);
     markDocumentDirty(editor);
     updateStatusBar();
     showDockPane(m_protectedSnippetDock);
@@ -1973,6 +2006,29 @@ void MainWindow::clearProtectedSnippets()
     refreshProtectedSnippetPanel();
     markDocumentDirty(editor);
     updateStatusBar();
+}
+
+void MainWindow::syncProtectedSnippetsFromEditor(NovelEditor *editor)
+{
+    if (!editor)
+        return;
+
+    const QString kind = editor->property("documentKind").toString();
+    const QString id = editor->property("documentId").toString();
+    if (kind.isEmpty() || id.isEmpty())
+        return;
+
+    QVector<ProtectedSnippetRecord> records;
+    const auto snippets = editor->protectedSnippets();
+    records.reserve(snippets.size());
+    for (const auto &snippet : snippets)
+        records.append({snippet.label, snippet.text, snippet.start, snippet.length});
+
+    const QString key = protectionKey(kind, id);
+    if (records.isEmpty())
+        m_protectedSnippetsByDocument.remove(key);
+    else
+        m_protectedSnippetsByDocument.insert(key, records);
 }
 
 void MainWindow::recordEpisodeRevision(const QString &episodeId, const QString &content,

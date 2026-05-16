@@ -17,6 +17,7 @@
 #include <QTextDocument>
 #include <QTextFormat>
 #include <QTextEdit>
+#include <algorithm>
 #include <QVBoxLayout>
 
 class LineNumberArea : public QWidget {
@@ -113,6 +114,8 @@ NovelEditor::NovelEditor(const QString &sceneId, QWidget *parent)
             this, &NovelEditor::updateSearchHighlights);
     connect(this, &QPlainTextEdit::textChanged,
             this, &NovelEditor::onTextChanged);
+    connect(document(), &QTextDocument::contentsChange,
+            this, &NovelEditor::onContentsChange);
 
     connect(m_searchEdit, &QLineEdit::textEdited, this, &NovelEditor::onSearchTextEdited);
     connect(m_replaceEdit, &QLineEdit::textEdited, this, &NovelEditor::onReplaceTextEdited);
@@ -233,12 +236,20 @@ QString NovelEditor::currentSearchText() const
     return m_searchEdit->text().trimmed();
 }
 
-void NovelEditor::setProtectedSnippets(const QStringList &snippets)
+void NovelEditor::setProtectedSnippets(const QVector<ProtectedSnippet> &snippets)
 {
     if (m_protectedSnippets == snippets)
         return;
+    m_updatingProtectedSnippets = true;
     m_protectedSnippets = snippets;
+    normalizeProtectedSnippets();
+    m_updatingProtectedSnippets = false;
     updateSearchHighlights();
+}
+
+QVector<NovelEditor::ProtectedSnippet> NovelEditor::protectedSnippets() const
+{
+    return m_protectedSnippets;
 }
 
 void NovelEditor::onTextChanged()
@@ -281,6 +292,56 @@ void NovelEditor::onReplaceAll()
 {
     replaceAll();
     updateSearchHighlights();
+}
+
+void NovelEditor::onContentsChange(int position, int charsRemoved, int charsAdded)
+{
+    if (m_loading || m_updatingProtectedSnippets)
+        return;
+
+    bool changed = false;
+    const int delta = charsAdded - charsRemoved;
+    const int changeEnd = position + charsRemoved;
+
+    for (auto &snippet : m_protectedSnippets) {
+        const int originalStart = snippet.start;
+        const int originalEnd = snippet.start + snippet.length;
+
+        if (snippet.start < 0 || snippet.length < 0)
+            continue;
+
+        if (changeEnd <= originalStart) {
+            snippet.start += delta;
+        } else if (position < originalEnd) {
+            if (position < snippet.start)
+                snippet.start = position;
+            snippet.length += delta;
+            if (snippet.length < 0)
+                snippet.length = 0;
+        }
+
+        snippet.text = textForRange(snippet.start, snippet.length);
+        if (snippet.start != originalStart || (snippet.start + snippet.length) != originalEnd
+            || snippet.text != textForRange(originalStart, originalEnd - originalStart)) {
+            changed = true;
+        }
+    }
+
+    const auto oldSize = m_protectedSnippets.size();
+    m_protectedSnippets.erase(
+        std::remove_if(m_protectedSnippets.begin(), m_protectedSnippets.end(),
+            [](const ProtectedSnippet &snippet) {
+                return snippet.length <= 0 || snippet.text.trimmed().isEmpty();
+            }),
+        m_protectedSnippets.end());
+
+    if (m_protectedSnippets.size() != oldSize)
+        changed = true;
+
+    if (changed) {
+        updateSearchHighlights();
+        emit protectedSnippetsEdited();
+    }
 }
 
 void NovelEditor::hideSearchBar()
@@ -433,26 +494,22 @@ void NovelEditor::updateSearchHighlights()
         selections.append(currentLine);
     }
 
-    for (const QString &snippet : m_protectedSnippets) {
-        const QString trimmed = snippet.trimmed();
-        if (trimmed.isEmpty())
+    for (const auto &snippet : m_protectedSnippets) {
+        if (snippet.start < 0 || snippet.length <= 0)
+            continue;
+        QTextCursor cursor(document());
+        cursor.setPosition(snippet.start);
+        cursor.setPosition(snippet.start + snippet.length, QTextCursor::KeepAnchor);
+        if (!cursor.hasSelection())
             continue;
 
-        QTextCursor cursor(document());
-        cursor.movePosition(QTextCursor::Start);
-        while (true) {
-            cursor = document()->find(trimmed, cursor, QTextDocument::FindCaseSensitively);
-            if (cursor.isNull())
-                break;
-
-            QTextEdit::ExtraSelection selection;
-            selection.cursor = cursor;
-            QTextCharFormat format;
-            format.setBackground(QColor("#264653"));
-            format.setForeground(QColor("#d8f3dc"));
-            selection.format = format;
-            selections.append(selection);
-        }
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = cursor;
+        QTextCharFormat format;
+        format.setBackground(QColor("#264653"));
+        format.setForeground(QColor("#d8f3dc"));
+        selection.format = format;
+        selections.append(selection);
     }
 
     const QString search = currentSearchText();
@@ -482,6 +539,55 @@ void NovelEditor::updateSearchHighlights()
     }
 
     setExtraSelections(selections);
+}
+
+QString NovelEditor::textForRange(int start, int length) const
+{
+    if (start < 0 || length <= 0)
+        return QString();
+
+    QTextCursor cursor(document());
+    cursor.setPosition(start);
+    cursor.setPosition(start + length, QTextCursor::KeepAnchor);
+    QString text = cursor.selectedText();
+    text.replace(QChar(0x2029), '\n');
+    text.replace(QChar(0x2028), '\n');
+    return text;
+}
+
+void NovelEditor::normalizeProtectedSnippets()
+{
+    int searchFrom = 0;
+    for (auto &snippet : m_protectedSnippets) {
+        if (snippet.text.isEmpty() && snippet.start >= 0 && snippet.length > 0)
+            snippet.text = textForRange(snippet.start, snippet.length);
+
+        bool validRange = snippet.start >= 0
+            && snippet.length > 0
+            && snippet.start + snippet.length <= document()->characterCount() - 1
+            && textForRange(snippet.start, snippet.length) == snippet.text;
+
+        if (!validRange && !snippet.text.isEmpty()) {
+            QTextCursor found = document()->find(snippet.text, searchFrom, QTextDocument::FindCaseSensitively);
+            if (found.isNull())
+                found = document()->find(snippet.text, 0, QTextDocument::FindCaseSensitively);
+            if (!found.isNull()) {
+                snippet.start = found.selectionStart();
+                snippet.length = found.selectionEnd() - found.selectionStart();
+                searchFrom = found.selectionEnd();
+            }
+        }
+
+        if (snippet.start >= 0 && snippet.length > 0)
+            snippet.text = textForRange(snippet.start, snippet.length);
+    }
+
+    m_protectedSnippets.erase(
+        std::remove_if(m_protectedSnippets.begin(), m_protectedSnippets.end(),
+            [](const ProtectedSnippet &snippet) {
+                return snippet.start < 0 || snippet.length <= 0 || snippet.text.trimmed().isEmpty();
+            }),
+        m_protectedSnippets.end());
 }
 
 QTextDocument::FindFlags NovelEditor::searchFlags() const

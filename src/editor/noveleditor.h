@@ -1,8 +1,9 @@
 #pragma once
 
 #include <QPlainTextEdit>
+#include <QTextCursor>
 #include <QString>
-#include <QStringList>
+#include <QVector>
 #include <QWidget>
 #include <QResizeEvent>
 #include <QPaintEvent>
@@ -19,6 +20,15 @@ class LineNumberArea;
 class NovelEditor : public QPlainTextEdit {
     W_OBJECT(NovelEditor)
 public:
+    struct ProtectedSnippet {
+        QString label;
+        QString text;
+        int start = -1;
+        int length = 0;
+
+        bool operator==(const ProtectedSnippet &other) const = default;
+    };
+
     explicit NovelEditor(const QString &sceneId, QWidget *parent = nullptr);
 
     QString sceneId() const { return m_sceneId; }
@@ -31,11 +41,14 @@ public:
     int replaceAll();
     void setSearchText(const QString &text);
     QString currentSearchText() const;
-    void setProtectedSnippets(const QStringList &snippets);
+    void setProtectedSnippets(const QVector<ProtectedSnippet> &snippets);
+    QVector<ProtectedSnippet> protectedSnippets() const;
 
 public:
     void contentChanged(const QString &text)
     W_SIGNAL(contentChanged, (const QString &), text)
+    void protectedSnippetsEdited()
+    W_SIGNAL(protectedSnippetsEdited)
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -62,6 +75,8 @@ private:
     W_SLOT(onReplaceOne)
     void onReplaceAll();
     W_SLOT(onReplaceAll)
+    void onContentsChange(int position, int charsRemoved, int charsAdded);
+    W_SLOT(onContentsChange, (int, int, int))
     void hideSearchBar();
     W_SLOT(hideSearchBar)
 
@@ -75,6 +90,8 @@ private:
     void updateSearchHighlights();
     int countSearchHits(const QString &text) const;
     QTextDocument::FindFlags searchFlags() const;
+    QString textForRange(int start, int length) const;
+    void normalizeProtectedSnippets();
 
     QString m_sceneId;
     SyntaxHighlighter *m_highlighter = nullptr;
@@ -92,5 +109,6 @@ private:
     QPushButton *m_closeSearchButton = nullptr;
     int m_searchBarHeight = 0;
     bool m_loading = false;
-    QStringList m_protectedSnippets;
+    bool m_updatingProtectedSnippets = false;
+    QVector<ProtectedSnippet> m_protectedSnippets;
 };

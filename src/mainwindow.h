@@ -42,6 +42,8 @@ public:
     struct ProtectedSnippetRecord {
         QString label;
         QString text;
+        int start = -1;
+        int length = 0;
     };
 
     explicit MainWindow(QWidget *parent = nullptr);
@@ -163,6 +165,7 @@ private:
                                             const QString &notes,
                                             const QString &aiModel = QString());
     void refreshProtectedSnippetPanel();
+    void syncProtectedSnippetsFromEditor(NovelEditor *editor);
     QString currentDocumentProtectionKey() const;
     QString protectionKey(const QString &kind, const QString &id) const;
 
