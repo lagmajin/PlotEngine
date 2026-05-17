@@ -9,8 +9,6 @@ module;
 #include <QVector>
 
 export module PlotEngine.Core.RevisionStore;
-
-import std;
 import PlotEngine.Core.RevisionManager;
 
 export namespace PlotEngine::RevisionStore {

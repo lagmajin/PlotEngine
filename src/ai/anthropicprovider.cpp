@@ -1,6 +1,9 @@
 #include "anthropicprovider.h"
+#include "wobjectimpl.h"
 #include <QUrl>
 #include <QNetworkRequest>
+
+W_OBJECT_IMPL(AnthropicProvider)
 
 AnthropicProvider::AnthropicProvider(const QString &apiKey, QObject *parent)
     : IAiProvider(parent), m_apiKey(apiKey)

@@ -6,6 +6,8 @@
   "supports": "windows",
   "dependencies": [
     "qtbase",
-    "qt-advanced-docking-system"
+    "qt-advanced-docking-system",
+    "python3",
+    "pybind11"
   ]
 }

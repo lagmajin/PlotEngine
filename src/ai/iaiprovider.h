@@ -4,9 +4,10 @@
 #include <QString>
 #include <QStringList>
 #include "airequest.h"
+#include "wobjectdefs.h"
 
 class IAiProvider : public QObject {
-    Q_OBJECT
+    W_OBJECT(IAiProvider)
 public:
     explicit IAiProvider(QObject *parent = nullptr) : QObject(parent) {}
     virtual ~IAiProvider() = default;
@@ -18,9 +19,13 @@ public:
     virtual bool isStreaming() const = 0;
     virtual QStringList availableModels() const = 0;
 
-signals:
-    void responseReceived(const AiResponse &response);
-    void streamChunk(const QString &chunk);
-    void streamFinished();
-    void error(const QString &message);
+public:
+    void responseReceived(const AiResponse &response)
+    W_SIGNAL(responseReceived, (const AiResponse &), response)
+    void streamChunk(const QString &chunk)
+    W_SIGNAL(streamChunk, (const QString &), chunk)
+    void streamFinished()
+    W_SIGNAL(streamFinished)
+    void error(const QString &message)
+    W_SIGNAL(error, (const QString &), message)
 };

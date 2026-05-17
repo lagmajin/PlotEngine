@@ -3,9 +3,9 @@
 ## Goals
 
 - Keep the project self-contained and reproducible through `vcpkg` manifest mode.
-- Prefer C++20/23 modules for new pure C++ code.
+- Require C++20/23 modules for project domain code.
 - Keep Qt UI code working first, then migrate internals gradually.
-- Use `import std;` in new module units when it improves clarity.
+- Require `import std;` in project module units.
 
 ## Dependency Policy
 
@@ -14,20 +14,23 @@
 - Dependency versions should be pinned through `vcpkg.json` and `vcpkg-configuration.json`.
 - Do not rely on a machine-wide Qt install once the manifest-based flow is in place.
 - The CMake preset assumes `VCPKG_ROOT` points at a local vcpkg checkout.
-- The primary configure preset uses `Ninja` because `import std;` support is not reliable with the Visual Studio generator.
+- The primary configure preset uses `Ninja` and enables the standard library module path.
 - CMake 3.30+ is required for `CMAKE_CXX_MODULE_STD`.
 
 ## Module Policy
 
-- New domain code should be written as `.ixx` or `.cppm` first.
+- New domain code must be written as `.ixx` or `.cppm`.
 - Prefer module interfaces for stable boundaries and implementation units for internals.
 - Keep Qt-heavy classes in headers until the module boundary is proven safe.
 - Move model, serialization, formatting, and project logic into modules before the UI shell.
 - Current module boundaries: `PlotEngine.Core.TextUtils`, `PlotEngine.Core.NovelProject`, `PlotEngine.Core.ProjectManager`.
+- Treat legacy header/source pairs for domain logic as migration targets, not the desired steady state.
+- Do not migrate an `ixx`/`cppm` area back to classic headers/sources unless the user explicitly requests that rollback.
 
 ## `import std`
 
-- Use `import std;` in new module units where the toolchain supports it reliably.
+- `import std;` is mandatory in project-owned module units.
+- Do not replace `import std;` with piecemeal standard headers in module units unless the project policy changes.
 - Avoid mixing `import std;` into legacy translation units unless it reduces friction.
 - Prefer standard library facilities over custom utility code when modules make the dependency graph simpler.
 
@@ -52,3 +55,4 @@
 - Keep the first module small, testable, and low-risk.
 - Preserve existing behavior before changing architecture.
 - Prefer incremental refactors that can be compiled after each step.
+- When adding or refactoring domain code, prefer changing the build to support modules rather than falling back to non-module structure.

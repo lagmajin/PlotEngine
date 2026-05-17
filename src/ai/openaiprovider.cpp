@@ -1,8 +1,11 @@
 #include "openaiprovider.h"
+#include "wobjectimpl.h"
 #include <QUrl>
 #include <QNetworkRequest>
 #include <QEventLoop>
 #include <QTimer>
+
+W_OBJECT_IMPL(OpenAiProvider)
 
 OpenAiProvider::OpenAiProvider(const QString &apiKey, QObject *parent)
     : IAiProvider(parent), m_apiKey(apiKey)

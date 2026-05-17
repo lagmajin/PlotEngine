@@ -1,8 +1,9 @@
 #pragma once
 
-#include "novelproject.h"
 #include <QString>
 #include <optional>
+
+class NovelProject;
 
 class ProjectManager {
 public:

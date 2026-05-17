@@ -4,12 +4,20 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QSet>
-#include <QUuid>
 
 export module PlotEngine.Core.DocumentCommands;
-
-import std;
 import PlotEngine.Core.NovelProject;
+
+namespace {
+QString makeGeneratedId(const char *prefix)
+{
+    static quint64 counter = 0;
+    return QStringLiteral("%1_%2_%3")
+        .arg(QLatin1String(prefix))
+        .arg(QDateTime::currentMSecsSinceEpoch())
+        .arg(++counter);
+}
+}
 
 export namespace PlotEngine::Docs {
 
@@ -197,12 +205,12 @@ bool renameEpisode(NovelProject &project, const QString &chapterId, const QStrin
 QString addChapter(NovelProject &project, QString *createdEpisodeId)
 {
     Chapter chapter;
-    chapter.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    chapter.id = makeGeneratedId("chapter");
     chapter.title = QStringLiteral("第%1章").arg(project.chapters.size() + 1);
     chapter.sortOrder = project.chapters.size();
 
     Episode episode;
-    episode.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    episode.id = makeGeneratedId("episode");
     episode.title = QStringLiteral("エピソード1");
     episode.createdAt = QDateTime::currentDateTime();
     episode.modifiedAt = episode.createdAt;
@@ -223,7 +231,7 @@ QString addEpisode(NovelProject &project, const QString &chapterId)
         return QString();
 
     Episode episode;
-    episode.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    episode.id = makeGeneratedId("episode");
     episode.title = QStringLiteral("エピソード%1").arg(chapter->episodes.size() + 1);
     episode.createdAt = QDateTime::currentDateTime();
     episode.modifiedAt = episode.createdAt;

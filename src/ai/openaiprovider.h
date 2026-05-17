@@ -8,9 +8,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include "wobjectdefs.h"
 
 class OpenAiProvider : public IAiProvider {
-    Q_OBJECT
+    W_OBJECT(OpenAiProvider)
 public:
     explicit OpenAiProvider(const QString &apiKey, QObject *parent = nullptr);
 

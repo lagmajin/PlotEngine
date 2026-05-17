@@ -5,8 +5,8 @@
 #include <QWidget>
 #include "wobjectdefs.h"
 
-import PlotEngine.UI.DockPane;
-import PlotEngine.Core.NovelProject;
+#include "ui/dockpane.h"
+#include "core/novelproject.h"
 
 class QLineEdit;
 

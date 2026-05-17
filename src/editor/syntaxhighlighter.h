@@ -5,7 +5,6 @@
 #include <QTextCharFormat>
 
 class SyntaxHighlighter : public QSyntaxHighlighter {
-    Q_OBJECT
 public:
     explicit SyntaxHighlighter(QTextDocument *parent = nullptr);
 

@@ -1,5 +1,5 @@
 #include "structurepanel.h"
-import PlotEngine.Core.NovelProject;
+#include "wobjectimpl.h"
 #include <QHeaderView>
 #include <QAction>
 #include <QVBoxLayout>
@@ -17,6 +17,8 @@ import PlotEngine.Core.NovelProject;
 #include <QPointF>
 #include <QToolButton>
 #include <QFrame>
+
+import PlotEngine.App.Metadata;
 
 namespace {
 QIcon documentIcon(const QString &kind, bool dirty = false)
@@ -94,6 +96,13 @@ void styleSectionButton(QToolButton *button)
         }
     )");
 }
+}
+
+W_OBJECT_IMPL(StructurePanel)
+
+DockPaneSpec StructurePanel::dockSpec()
+{
+    return { QStringLiteral("エクスプローラ"), DockPlacement::Left, true };
 }
 
 StructurePanel::StructurePanel(QWidget *parent)
@@ -248,7 +257,7 @@ void StructurePanel::setSectionExpanded(QToolButton *button, QWidget *content, b
 
 void StructurePanel::loadSectionState()
 {
-    QSettings settings("PlotEngine", "PlotEngine");
+    QSettings settings = PlotEngine::App::makeSettings();
     setSectionExpanded(m_structureHeader, m_structureFrame, settings.value("explorer/structureExpanded", true).toBool());
     setSectionExpanded(m_openDocumentsHeader, m_openDocumentsFrame, settings.value("explorer/openExpanded", true).toBool());
     setSectionExpanded(m_currentDocumentHeader, m_currentDocumentFrame, settings.value("explorer/currentExpanded", true).toBool());
@@ -256,7 +265,7 @@ void StructurePanel::loadSectionState()
 
 void StructurePanel::saveSectionState(const QString &key, bool expanded) const
 {
-    QSettings settings("PlotEngine", "PlotEngine");
+    QSettings settings = PlotEngine::App::makeSettings();
     settings.setValue(key, expanded);
 }
 

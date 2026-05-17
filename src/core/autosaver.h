@@ -7,38 +7,24 @@
 #include <QDir>
 #include <QFile>
 #include <functional>
-#include "core/novelproject.h"
-#include "core/revisionmanager.ixx"
+#include "wobjectdefs.h"
+
+class NovelProject;
+
+namespace PlotEngine::Revisions {
+enum class RevisionType;
+}
 
 class AutoSaver : public QObject {
-    Q_OBJECT
+    W_OBJECT(AutoSaver)
 public:
-    explicit AutoSaver(QObject *parent = nullptr)
-        : QObject(parent), m_timer(new QTimer(this))
-    {
-        m_timer->setSingleShot(false);
-        QObject::connect(m_timer, &QTimer::timeout, this, [this]() {
-            trySave();
-        });
-    }
+    explicit AutoSaver(QObject *parent = nullptr);
 
-    void setIntervalSeconds(int seconds) {
-        m_intervalSeconds = seconds;
-        if (m_enabled && m_timer->isActive()) {
-            m_timer->start(seconds * 1000);
-        }
-    }
+    void setIntervalSeconds(int seconds);
 
     int intervalSeconds() const { return m_intervalSeconds; }
 
-    void setEnabled(bool enabled) {
-        m_enabled = enabled;
-        if (enabled) {
-            m_timer->start(m_intervalSeconds * 1000);
-        } else {
-            m_timer->stop();
-        }
-    }
+    void setEnabled(bool enabled);
 
     bool isEnabled() const { return m_enabled; }
 
@@ -48,29 +34,7 @@ public:
         m_revisionCallback = cb;
     }
 
-    void trySave() {
-        if (!m_enabled || !m_project || m_project->filePath.isEmpty())
-            return;
-
-        auto now = QDateTime::currentDateTime();
-        if (now.msecsTo(m_lastSaveTime) < m_intervalSeconds * 1000)
-            return;
-
-        QString backupDir = m_project->filePath + ".bak";
-        QDir dir;
-        if (!dir.exists(backupDir))
-            dir.mkpath(backupDir);
-
-        QString backupPath = backupDir + "/" + now.toString("yyyyMMdd_HHmmss") + ".plotproj";
-        if (ProjectManager::save(*m_project, backupPath)) {
-            if (m_revisionCallback) {
-                m_revisionCallback(m_project->filePath, backupPath,
-                    PlotEngine::Revisions::RevisionType::ManualEdit);
-            }
-            m_lastSaveTime = now;
-            emit autoSaved(backupPath);
-        }
-    }
+    void trySave();
 
     QDateTime lastSaveTime() const { return m_lastSaveTime; }
     int secondsSinceLastSave() const {
@@ -78,8 +42,9 @@ public:
         return m_lastSaveTime.secsTo(QDateTime::currentDateTime());
     }
 
-signals:
-    void autoSaved(const QString &backupPath);
+public:
+    void autoSaved(const QString &backupPath)
+    W_SIGNAL(autoSaved, (const QString &), backupPath)
 
 private:
     QTimer *m_timer = nullptr;

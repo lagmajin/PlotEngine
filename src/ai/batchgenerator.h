@@ -8,6 +8,7 @@
 #include <functional>
 #include "ai/airequest.h"
 #include "ai/iaiprovider.h"
+#include "wobjectdefs.h"
 
 struct BatchTask {
     QString episodeId;
@@ -22,7 +23,7 @@ struct BatchTask {
 };
 
 class BatchGenerator : public QObject {
-    Q_OBJECT
+    W_OBJECT(BatchGenerator)
 public:
     explicit BatchGenerator(IAiProvider *provider, QObject *parent = nullptr);
 
@@ -42,8 +43,11 @@ public:
 
 private:
     void processNext();
+    W_SLOT(processNext)
     void onTaskCompleted(const AiResponse &response);
+    W_SLOT(onTaskCompleted, (const AiResponse &))
     void onTaskError(const QString &error);
+    W_SLOT(onTaskError, (const QString &))
 
     IAiProvider *m_provider = nullptr;
     QVector<BatchTask> m_tasks;
@@ -52,13 +56,21 @@ private:
     bool m_paused = false;
     bool m_cancelled = false;
 
-signals:
-    void batchStarted();
-    void batchFinished();
-    void batchCancelled();
-    void taskStarted(int index, const QString &episodeId);
-    void taskCompleted(int index, const QString &episodeId, const QString &result);
-    void taskFailed(int index, const QString &episodeId, const QString &error);
-    void taskRetrying(int index, const QString &episodeId, int retryCount);
-    void progressChanged(int completed, int total);
+public:
+    void batchStarted()
+    W_SIGNAL(batchStarted)
+    void batchFinished()
+    W_SIGNAL(batchFinished)
+    void batchCancelled()
+    W_SIGNAL(batchCancelled)
+    void taskStarted(int index, const QString &episodeId)
+    W_SIGNAL(taskStarted, (int, const QString &), index, episodeId)
+    void taskCompleted(int index, const QString &episodeId, const QString &result)
+    W_SIGNAL(taskCompleted, (int, const QString &, const QString &), index, episodeId, result)
+    void taskFailed(int index, const QString &episodeId, const QString &error)
+    W_SIGNAL(taskFailed, (int, const QString &, const QString &), index, episodeId, error)
+    void taskRetrying(int index, const QString &episodeId, int retryCount)
+    W_SIGNAL(taskRetrying, (int, const QString &, int), index, episodeId, retryCount)
+    void progressChanged(int completed, int total)
+    W_SIGNAL(progressChanged, (int, int), completed, total)
 };

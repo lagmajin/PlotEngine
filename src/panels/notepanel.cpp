@@ -1,6 +1,13 @@
 #include "notepanel.h"
-import PlotEngine.Core.NovelProject;
+#include "wobjectimpl.h"
 #include <QVBoxLayout>
+
+W_OBJECT_IMPL(NotePanel)
+
+DockPaneSpec NotePanel::dockSpec()
+{
+    return { QStringLiteral("ノート"), DockPlacement::Right, true };
+}
 
 NotePanel::NotePanel(QWidget *parent)
     : QWidget(parent)

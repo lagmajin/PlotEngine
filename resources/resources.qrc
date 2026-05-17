@@ -1,4 +1,11 @@
 <RCC>
     <qresource prefix="/">
+        <file>icons/plotengine-16.png</file>
+        <file>icons/plotengine-24.png</file>
+        <file>icons/plotengine-32.png</file>
+        <file>icons/plotengine-48.png</file>
+        <file>icons/plotengine-64.png</file>
+        <file>icons/plotengine-128.png</file>
+        <file>icons/plotengine-256.png</file>
     </qresource>
 </RCC>

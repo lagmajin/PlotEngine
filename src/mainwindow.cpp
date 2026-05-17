@@ -3,6 +3,7 @@
 #include "DockManager.h"
 #include "editor/noveleditor.h"
 #include "ai/veniceprovider.h"
+#include "ui/dockpane.h"
 #include "panels/notepanel.h"
 #include "panels/reviewpanel.h"
 #include "panels/revisionhistorypanel.h"
@@ -10,6 +11,7 @@
 #include "panels/structurepanel.h"
 #include "panels/protectedsnippetpanel.h"
 #include "panels/sceneboardpanel.h"
+#include "scripting/pythonscriptrunner.h"
 #include "wobjectimpl.h"
 #include <QAction>
 #include <QFileDialog>
@@ -41,6 +43,7 @@
 #include <QMenu>
 #include <QSettings>
 #include <QFileInfo>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -51,8 +54,14 @@
 #include <QPlainTextEdit>
 #include <QVector>
 #include <QList>
+#include <QDateTime>
+#include <algorithm>
 
+import PlotEngine.App.Metadata;
+import PlotEngine.UI.IconFactory;
+import PlotEngine.Core.NovelProject;
 import PlotEngine.Core.ProjectManager;
+import PlotEngine.Core.AutoSaver;
 import PlotEngine.Core.DocumentCommands;
 import PlotEngine.Core.RevisionManager;
 import PlotEngine.Core.RevisionStore;
@@ -60,9 +69,7 @@ import PlotEngine.Core.TextUtils;
 import PlotEngine.AI.DataAction;
 import PlotEngine.AI.RevisionPrompt;
 import PlotEngine.AI.SecretStore;
-import PlotEngine.App.Metadata;
-import PlotEngine.UI.DockPane;
-import PlotEngine.UI.IconFactory;
+#include "ai/secretstore.h"
 
 #define m_project (*m_projectData)
 #define m_aiEditSnapshot (*m_aiEditSnapshotData)
@@ -71,6 +78,15 @@ W_OBJECT_IMPL(MainWindow)
 
 namespace {
 constexpr int kRecentProjectLimit = 10;
+quint64 g_generatedIdCounter = 0;
+
+QString makeGeneratedId(const char *prefix)
+{
+    return QStringLiteral("%1_%2_%3")
+        .arg(QLatin1String(prefix))
+        .arg(QDateTime::currentMSecsSinceEpoch())
+        .arg(++g_generatedIdCounter);
+}
 
 QIcon appIcon(const QString &name)
 {
@@ -109,6 +125,32 @@ struct QuickOpenItem {
     QString detail;
 };
 
+struct RecoveryBackupEntry {
+    QString path;
+    QDateTime modified;
+};
+
+QVector<RecoveryBackupEntry> recoveryBackupsForProject(const QString &projectPath)
+{
+    QVector<RecoveryBackupEntry> result;
+    if (projectPath.isEmpty())
+        return result;
+
+    QDir backupDir(projectPath + QStringLiteral(".bak"));
+    if (!backupDir.exists())
+        return result;
+
+    const QFileInfoList files = backupDir.entryInfoList(QStringList{QStringLiteral("*.plotproj")}, QDir::Files);
+    result.reserve(files.size());
+    for (const QFileInfo &info : files) {
+        result.append({info.absoluteFilePath(), info.lastModified()});
+    }
+    std::sort(result.begin(), result.end(), [](const RecoveryBackupEntry &a, const RecoveryBackupEntry &b) {
+        return a.modified > b.modified;
+    });
+    return result;
+}
+
 enum class PaletteCommandId {
     QuickOpen,
     ProjectSearch,
@@ -122,6 +164,7 @@ enum class PaletteCommandId {
     SaveProjectAs,
     Polish,
     RollbackAiEdit,
+    RunPythonScript,
     AddChapter,
     AddEpisode,
     OpenDocument
@@ -135,33 +178,6 @@ struct PaletteCommand {
     QString documentKind;
     QString documentId;
 };
-
-ads::CDockWidget *createDockPane(ads::CDockManager *manager, const DockPaneSpec &spec, QWidget *widget)
-{
-    if (!manager || !widget)
-        return nullptr;
-
-    auto *dock = manager->createDockWidget(spec.title);
-    dock->setFeatures(ads::CDockWidget::DefaultDockWidgetFeatures);
-    dock->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromDockWidget);
-    dock->setWidget(widget);
-    switch (spec.placement) {
-    case DockPlacement::Left:
-        manager->addDockWidget(ads::LeftDockWidgetArea, dock);
-        break;
-    case DockPlacement::Center:
-        manager->addDockWidget(ads::CenterDockWidgetArea, dock);
-        break;
-    case DockPlacement::Right:
-        manager->addDockWidget(ads::RightDockWidgetArea, dock);
-        break;
-    case DockPlacement::Bottom:
-        manager->addDockWidget(ads::BottomDockWidgetArea, dock);
-        break;
-    }
-    dock->toggleViewAction()->setChecked(spec.visibleByDefault);
-    return dock;
-}
 
 Chapter *findChapterById(NovelProject &project, const QString &chapterId)
 {
@@ -333,6 +349,11 @@ MainWindow::MainWindow(QWidget *parent)
 {
     m_projectData = new NovelProject{};
     m_aiEditSnapshotData = new NovelProject{};
+    m_autoSaver = new AutoSaver(this);
+    m_autoSaver->setProject(m_projectData);
+    QSettings autosaveSettings = PlotEngine::App::makeSettings();
+    m_autoSaver->setIntervalSeconds(autosaveSettings.value("autosave/intervalSeconds", 120).toInt());
+    m_autoSaver->setEnabled(autosaveSettings.value("autosave/enabled", true).toBool());
     setMinimumSize(1000, 600);
     applyStyleSheet();
     setupDockManager();
@@ -359,6 +380,12 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupMenuBar()
 {
+    QFont menuFont = menuBar()->font();
+    menuFont.setPointSize(menuFont.pointSize() + 1);
+    menuFont.setWeight(QFont::DemiBold);
+    menuBar()->setFont(menuFont);
+    menuBar()->setMinimumHeight(34);
+
     auto *fileMenu = menuBar()->addMenu("ファイル(&F)");
 
     auto *newAction = fileMenu->addAction(appIcon("new"), "新規プロジェクト(&N)");
@@ -372,6 +399,16 @@ void MainWindow::setupMenuBar()
     m_recentProjectsMenu = fileMenu->addMenu("最近使ったプロジェクト");
     m_recentProjectsMenu->setIcon(appIcon("recent"));
     updateRecentProjectsMenu();
+
+    QSettings sessionSettings = PlotEngine::App::makeSettings();
+    m_restoreLastProjectAction = fileMenu->addAction(appIcon("recent"), "起動時に最後のプロジェクトを復元");
+    m_restoreLastProjectAction->setCheckable(true);
+    m_restoreLastProjectAction->setChecked(sessionSettings.value("session/restoreLastProjectOnStartup", true).toBool());
+    connect(m_restoreLastProjectAction, &QAction::toggled, this, [](bool checked) {
+        QSettings settings = PlotEngine::App::makeSettings();
+        settings.setValue("session/restoreLastProjectOnStartup", checked);
+        settings.sync();
+    });
 
     fileMenu->addSeparator();
 
@@ -433,6 +470,9 @@ void MainWindow::setupMenuBar()
     aiMenu->addAction(appIcon("ai-settings"), "Venice 設定...", this, &MainWindow::showAiSettings);
     aiMenu->addAction(appIcon("ai-rollback"), "直前の AI 編集を戻す", this, &MainWindow::rollbackLastAiEdit);
 
+    auto *scriptMenu = menuBar()->addMenu("スクリプト(&S)");
+    scriptMenu->addAction(appIcon("command-palette"), "Python スクリプトを実行...", this, &MainWindow::runPythonScript);
+
     auto *viewMenu = menuBar()->addMenu("表示(&V)");
     setupDockViewMenu(viewMenu);
 
@@ -447,7 +487,14 @@ void MainWindow::setupToolBar()
 {
     auto *toolbar = addToolBar("メインツールバー");
     toolbar->setMovable(false);
-    toolbar->setIconSize(QSize(24, 24));
+    toolbar->setAllowedAreas(Qt::TopToolBarArea);
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->setIconSize(QSize(28, 28));
+    toolbar->setMinimumHeight(44);
+    QFont toolbarFont = toolbar->font();
+    toolbarFont.setPointSize(toolbarFont.pointSize() + 1);
+    toolbarFont.setWeight(QFont::DemiBold);
+    toolbar->setFont(toolbarFont);
 
     toolbar->addAction(appIcon("new"), "新規", this, &MainWindow::newProject);
     toolbar->addAction(appIcon("open"), "開く", this, &MainWindow::openProject);
@@ -480,7 +527,7 @@ void MainWindow::setupDockManager()
     ads::CDockManager::setConfigFlag(ads::CDockManager::FocusHighlighting, true);
     ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaHideDisabledButtons, true);
     ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaDynamicTabsMenuButtonVisibility, true);
-    ads::CDockManager::setConfigFlag(ads::CDockManager::HideSingleCentralWidgetTitleBar, false);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::HideSingleCentralWidgetTitleBar, true);
     ads::CDockManager::setAutoHideConfigFlags(ads::CDockManager::DefaultAutoHideConfig);
     ads::CDockManager::setFloatingContainersTitle("PlotEngine");
     m_dockManager = new ads::CDockManager(this);
@@ -496,6 +543,9 @@ void MainWindow::setupEditorTabs()
     m_editorTabs->setElideMode(Qt::ElideMiddle);
     m_editorTabs->setUsesScrollButtons(true);
     m_editorTabs->tabBar()->setExpanding(false);
+    m_editorTabs->tabBar()->setIconSize(QSize(12, 12));
+    m_editorTabs->tabBar()->setShape(QTabBar::RoundedNorth);
+    m_editorTabs->tabBar()->setMinimumHeight(24);
     m_welcomePage = new QWidget(m_centerStack);
     auto *welcomeLayout = new QVBoxLayout(m_welcomePage);
     welcomeLayout->setContentsMargins(24, 24, 24, 24);
@@ -546,7 +596,7 @@ void MainWindow::setupEditorTabs()
     m_centerStack->addWidget(m_editorTabs);
     m_centerStack->setCurrentWidget(m_welcomePage);
 
-    m_editorDock = createDockPane(m_dockManager, { QStringLiteral("エディタ"), DockPlacement::Center, true }, m_centerStack);
+    m_editorDock = PlotEngine::UI::createDockPane(m_dockManager, { QStringLiteral("エディタ"), DockPlacement::Center, true }, m_centerStack);
     m_editorDock->setIcon(appIcon("editor"));
 
     connect(m_editorTabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
@@ -561,6 +611,8 @@ void MainWindow::setupEditorTabs()
         refreshRevisionHistoryPanel();
         refreshProtectedSnippetPanel();
         refreshWorkspaceView();
+        if (!m_loadingSession)
+            saveSessionState();
     });
     connect(m_editorTabs, &QTabWidget::currentChanged, this, [this]() {
         updateCursorStatus();
@@ -570,37 +622,39 @@ void MainWindow::setupEditorTabs()
         refreshProtectedSnippetPanel();
         refreshSceneBoardPanel();
         refreshWorkspaceView();
+        if (!m_loadingSession)
+            saveSessionState();
     });
 }
 
 void MainWindow::setupDockWidgets()
 {
     m_structurePanel = new StructurePanel(this);
-    m_structureDock = createDockPane(m_dockManager, StructurePanel::dockSpec(), m_structurePanel);
+    m_structureDock = PlotEngine::UI::createDockPane(m_dockManager, StructurePanel::dockSpec(), m_structurePanel);
     m_structureDock->setIcon(appIcon("explorer"));
 
     m_notePanel = new NotePanel(this);
-    m_noteDock = createDockPane(m_dockManager, NotePanel::dockSpec(), m_notePanel);
+    m_noteDock = PlotEngine::UI::createDockPane(m_dockManager, NotePanel::dockSpec(), m_notePanel);
     m_noteDock->setIcon(appIcon("notes"));
 
     m_searchPanel = new SearchPanel(this);
-    m_searchDock = createDockPane(m_dockManager, SearchPanel::dockSpec(), m_searchPanel);
+    m_searchDock = PlotEngine::UI::createDockPane(m_dockManager, SearchPanel::dockSpec(), m_searchPanel);
     m_searchDock->setIcon(appIcon("search"));
 
     m_reviewPanel = new ReviewPanel(this);
-    m_reviewDock = createDockPane(m_dockManager, ReviewPanel::dockSpec(), m_reviewPanel);
+    m_reviewDock = PlotEngine::UI::createDockPane(m_dockManager, ReviewPanel::dockSpec(), m_reviewPanel);
     m_reviewDock->setIcon(appIcon("polish"));
 
     m_revisionHistoryPanel = new RevisionHistoryPanel(this);
-    m_revisionHistoryDock = createDockPane(m_dockManager, RevisionHistoryPanel::dockSpec(), m_revisionHistoryPanel);
+    m_revisionHistoryDock = PlotEngine::UI::createDockPane(m_dockManager, RevisionHistoryPanel::dockSpec(), m_revisionHistoryPanel);
     m_revisionHistoryDock->setIcon(appIcon("recent"));
 
     m_protectedSnippetPanel = new ProtectedSnippetPanel(this);
-    m_protectedSnippetDock = createDockPane(m_dockManager, ProtectedSnippetPanel::dockSpec(), m_protectedSnippetPanel);
+    m_protectedSnippetDock = PlotEngine::UI::createDockPane(m_dockManager, ProtectedSnippetPanel::dockSpec(), m_protectedSnippetPanel);
     m_protectedSnippetDock->setIcon(appIcon("notes"));
 
     m_sceneBoardPanel = new SceneBoardPanel(this);
-    m_sceneBoardDock = createDockPane(m_dockManager, SceneBoardPanel::dockSpec(), m_sceneBoardPanel);
+    m_sceneBoardDock = PlotEngine::UI::createDockPane(m_dockManager, SceneBoardPanel::dockSpec(), m_sceneBoardPanel);
     m_sceneBoardDock->setIcon(appIcon("structure"));
 }
 
@@ -641,61 +695,67 @@ void MainWindow::setupDockViewMenu(QMenu *viewMenu)
     viewMenu->addAction(m_focusModeAction);
     auto *floatMenu = viewMenu->addMenu(appIcon("quick-open"), "フローティング表示");
     floatMenu->addAction(appIcon("explorer"), "エクスプローラを浮かせる", this, [this]() {
-        floatDockPane(m_structureDock);
+        PlotEngine::UI::floatDockPane(m_structureDock);
     });
     floatMenu->addAction(appIcon("notes"), "ノートを浮かせる", this, [this]() {
-        floatDockPane(m_noteDock);
+        PlotEngine::UI::floatDockPane(m_noteDock);
     });
     floatMenu->addAction(appIcon("search"), "検索を浮かせる", this, [this]() {
-        floatDockPane(m_searchDock);
+        PlotEngine::UI::floatDockPane(m_searchDock);
     });
     floatMenu->addAction(appIcon("polish"), "AI レビューを浮かせる", this, [this]() {
-        floatDockPane(m_reviewDock);
+        PlotEngine::UI::floatDockPane(m_reviewDock);
     });
     floatMenu->addAction(appIcon("recent"), "リビジョン履歴を浮かせる", this, [this]() {
-        floatDockPane(m_revisionHistoryDock);
+        PlotEngine::UI::floatDockPane(m_revisionHistoryDock);
     });
     floatMenu->addAction(appIcon("notes"), "保護ブロックを浮かせる", this, [this]() {
-        floatDockPane(m_protectedSnippetDock);
+        PlotEngine::UI::floatDockPane(m_protectedSnippetDock);
     });
     floatMenu->addAction(appIcon("structure"), "Scene Cards を浮かせる", this, [this]() {
-        floatDockPane(m_sceneBoardDock);
+        PlotEngine::UI::floatDockPane(m_sceneBoardDock);
     });
     floatMenu->addAction(appIcon("editor"), "エディタを浮かせる", this, [this]() {
-        floatDockPane(m_editorDock);
+        PlotEngine::UI::floatDockPane(m_editorDock);
     });
-}
 
-void MainWindow::showDockPane(ads::CDockWidget *dock)
-{
-    if (!dock)
-        return;
-
-    dock->toggleView(true);
-    dock->raise();
-}
-
-void MainWindow::floatDockPane(ads::CDockWidget *dock)
-{
-    if (!dock)
-        return;
-
-    dock->toggleView(true);
-    if (!dock->isFloating())
-        dock->setFloating();
-    dock->raise();
+    auto *dockMenu = viewMenu->addMenu(appIcon("explorer"), "ドックに戻す");
+    dockMenu->addAction(appIcon("explorer"), "エクスプローラを戻す", this, [this]() {
+        PlotEngine::UI::dockDockPane(m_dockManager, m_structureDock, StructurePanel::dockSpec().placement);
+    });
+    dockMenu->addAction(appIcon("notes"), "ノートを戻す", this, [this]() {
+        PlotEngine::UI::dockDockPane(m_dockManager, m_noteDock, NotePanel::dockSpec().placement);
+    });
+    dockMenu->addAction(appIcon("search"), "検索を戻す", this, [this]() {
+        PlotEngine::UI::dockDockPane(m_dockManager, m_searchDock, SearchPanel::dockSpec().placement);
+    });
+    dockMenu->addAction(appIcon("polish"), "AI レビューを戻す", this, [this]() {
+        PlotEngine::UI::dockDockPane(m_dockManager, m_reviewDock, ReviewPanel::dockSpec().placement);
+    });
+    dockMenu->addAction(appIcon("recent"), "リビジョン履歴を戻す", this, [this]() {
+        PlotEngine::UI::dockDockPane(m_dockManager, m_revisionHistoryDock, RevisionHistoryPanel::dockSpec().placement);
+    });
+    dockMenu->addAction(appIcon("notes"), "保護ブロックを戻す", this, [this]() {
+        PlotEngine::UI::dockDockPane(m_dockManager, m_protectedSnippetDock, ProtectedSnippetPanel::dockSpec().placement);
+    });
+    dockMenu->addAction(appIcon("structure"), "Scene Cards を戻す", this, [this]() {
+        PlotEngine::UI::dockDockPane(m_dockManager, m_sceneBoardDock, SceneBoardPanel::dockSpec().placement);
+    });
+    dockMenu->addAction(appIcon("editor"), "エディタを戻す", this, [this]() {
+        PlotEngine::UI::dockDockPane(m_dockManager, m_editorDock, DockPlacement::Center);
+    });
 }
 
 void MainWindow::showAllDockPanes()
 {
-    showDockPane(m_structureDock);
-    showDockPane(m_noteDock);
-    showDockPane(m_searchDock);
-    showDockPane(m_reviewDock);
-    showDockPane(m_revisionHistoryDock);
-    showDockPane(m_protectedSnippetDock);
-    showDockPane(m_sceneBoardDock);
-    showDockPane(m_editorDock);
+    PlotEngine::UI::showDockPane(m_structureDock);
+    PlotEngine::UI::showDockPane(m_noteDock);
+    PlotEngine::UI::showDockPane(m_searchDock);
+    PlotEngine::UI::showDockPane(m_reviewDock);
+    PlotEngine::UI::showDockPane(m_revisionHistoryDock);
+    PlotEngine::UI::showDockPane(m_protectedSnippetDock);
+    PlotEngine::UI::showDockPane(m_sceneBoardDock);
+    PlotEngine::UI::showDockPane(m_editorDock);
 }
 
 void MainWindow::resetDockLayout()
@@ -926,6 +986,7 @@ void MainWindow::commandPalette()
     commands.append({"名前を付けて保存", "ファイル", "Ctrl+Shift+S", PaletteCommandId::SaveProjectAs, {}, {}});
     commands.append({"推敲", "AI", "", PaletteCommandId::Polish, {}, {}});
     commands.append({"直前の AI 編集を戻す", "AI", "", PaletteCommandId::RollbackAiEdit, {}, {}});
+    commands.append({"Python スクリプトを実行", "スクリプト", "", PaletteCommandId::RunPythonScript, {}, {}});
     commands.append({"章を追加", "構造", "", PaletteCommandId::AddChapter, {}, {}});
     commands.append({"エピソードを追加", "構造", "", PaletteCommandId::AddEpisode, {}, {}});
 
@@ -1025,6 +1086,9 @@ void MainWindow::commandPalette()
             break;
         case PaletteCommandId::RollbackAiEdit:
             rollbackLastAiEdit();
+            break;
+        case PaletteCommandId::RunPythonScript:
+            runPythonScript();
             break;
         case PaletteCommandId::AddChapter:
             addChapter();
@@ -1272,6 +1336,7 @@ void MainWindow::newProject()
     refreshProjectViews();
     openFirstEpisodeIfAny();
     updateStatusBar();
+    saveSessionState();
 }
 
 void MainWindow::openProject()
@@ -1287,26 +1352,37 @@ void MainWindow::openProject()
     openProjectFile(path);
 }
 
-void MainWindow::openProjectFile(const QString &path)
+bool MainWindow::loadProjectFromFile(const QString &sourcePath, const QString &projectPath)
 {
-    if (path.isEmpty())
-        return;
+    if (sourcePath.isEmpty())
+        return false;
 
-    auto result = ProjectManager::load(path);
+    auto result = ProjectManager::load(sourcePath);
     if (!result) {
         QMessageBox::warning(this, "エラー", "プロジェクトの読み込みに失敗しました。");
-        return;
+        return false;
     }
 
+    const QString logicalPath = projectPath.isEmpty() ? sourcePath : projectPath;
+    result->filePath = logicalPath;
     setCurrentProject(*result);
-    m_protectedSnippetsByDocument = loadProtectedSnippetStore(result->filePath);
+    m_protectedSnippetsByDocument = loadProtectedSnippetStore(logicalPath);
     markAllTabsClean();
     refreshProjectViews();
     refreshProtectedSnippetPanel();
-    addRecentProject(path);
+    if (!m_loadingSession)
+        addRecentProject(logicalPath);
     if (!m_loadingSession)
         openFirstEpisodeIfAny();
     updateStatusBar();
+    if (!m_loadingSession)
+        saveSessionState();
+    return true;
+}
+
+void MainWindow::openProjectFile(const QString &path)
+{
+    loadProjectFromFile(path, path);
 }
 
 bool MainWindow::saveProject()
@@ -1326,6 +1402,8 @@ bool MainWindow::saveProject()
         addRecentProject(m_project.filePath);
     updateStatusBar();
     refreshRevisionHistoryPanel();
+    if (ok)
+        saveSessionState();
     return ok;
 }
 
@@ -1354,6 +1432,8 @@ bool MainWindow::saveProjectAs()
     }
     updateStatusBar();
     refreshRevisionHistoryPanel();
+    if (ok)
+        saveSessionState();
     return ok;
 }
 
@@ -1380,7 +1460,7 @@ void MainWindow::onEpisodeSelected(const QString &chapterId, const QString &epis
     editor->setProperty("documentId", episodeId);
     editor->setProperty("chapterId", chapterId);
     editor->setProperty("baseTabTitle", tabTitle);
-    editor->setProperty("isDirty", false);
+    setDocumentDirtyState(editor, false);
     editor->setContent(episode->content);
     int idx = m_editorTabs->addTab(editor, tabTitle);
     m_editorTabs->setCurrentIndex(idx);
@@ -1431,7 +1511,7 @@ void MainWindow::onCharacterSelected(const QString &characterId)
     editor->setProperty("documentKind", "character");
     editor->setProperty("documentId", characterId);
     editor->setProperty("baseTabTitle", tabTitle);
-    editor->setProperty("isDirty", false);
+    setDocumentDirtyState(editor, false);
     editor->setContent(character->notes);
     int idx = m_editorTabs->addTab(editor, tabTitle);
     m_editorTabs->setCurrentIndex(idx);
@@ -1479,7 +1559,7 @@ void MainWindow::onLocationSelected(const QString &locationId)
     editor->setProperty("documentKind", "location");
     editor->setProperty("documentId", locationId);
     editor->setProperty("baseTabTitle", tabTitle);
-    editor->setProperty("isDirty", false);
+    setDocumentDirtyState(editor, false);
     editor->setContent(location->notes);
     int idx = m_editorTabs->addTab(editor, tabTitle);
     m_editorTabs->setCurrentIndex(idx);
@@ -1508,10 +1588,12 @@ void MainWindow::onLocationSelected(const QString &locationId)
 
 void MainWindow::updateStatusBar()
 {
+    const QString projectName = m_project.name.isEmpty() ? QStringLiteral("PlotEngine") : m_project.name;
+    const QString dirtyMark = m_dirty ? QStringLiteral(" *") : QString();
     if (m_project.filePath.isEmpty())
-        m_statusFile->setText(m_project.name + " (未保存)");
+        m_statusFile->setText(projectName + dirtyMark + QStringLiteral(" (未保存)"));
     else
-        m_statusFile->setText(m_project.name + " - " + m_project.filePath);
+        m_statusFile->setText(projectName + dirtyMark + QStringLiteral(" - ") + m_project.filePath);
 
     const QString windowLabel = m_project.name.isEmpty() ? QStringLiteral("PlotEngine") : m_project.name;
     setWindowTitle(m_dirty ? windowLabel + QStringLiteral(" * - PlotEngine") : windowLabel + QStringLiteral(" - PlotEngine"));
@@ -1649,8 +1731,9 @@ void MainWindow::refreshExplorerOpenDocuments()
         if (kind != "episode" && kind != "character" && kind != "location")
             continue;
 
-        const QString title = editor->property("baseTabTitle").toString();
         const bool dirty = editor->property("isDirty").toBool();
+        const QString title = editor->property("baseTabTitle").toString();
+        const QString displayTitle = dirty ? title + QStringLiteral(" *") : title;
         const QString detail =
             kind == "episode" ? QStringLiteral("エピソード") :
             kind == "character" ? QStringLiteral("キャラクター") :
@@ -1659,7 +1742,7 @@ void MainWindow::refreshExplorerOpenDocuments()
         documents.append({
             kind,
             editor->property("documentId").toString(),
-            title,
+            displayTitle,
             detail,
             dirty
         });
@@ -1681,7 +1764,7 @@ void MainWindow::refreshExplorerOpenDocuments()
         StructurePanel::OpenDocumentEntry currentEntry;
         currentEntry.kind = currentKind;
         currentEntry.id = currentId;
-        currentEntry.title = currentTitle;
+        currentEntry.title = currentDirty ? currentTitle + QStringLiteral(" *") : currentTitle;
         currentEntry.detail =
             currentKind == "episode" ? QStringLiteral("エピソード") :
             currentKind == "character" ? QStringLiteral("キャラクター") :
@@ -1800,11 +1883,8 @@ void MainWindow::closeOtherOpenDocuments(const QString &kind, const QString &id)
 
 void MainWindow::markDocumentDirty(QWidget *widget)
 {
-    if (widget)
-        widget->setProperty("isDirty", true);
-    m_dirty = true;
-    if (widget)
-        refreshTabTitle(widget);
+    setDocumentDirtyState(widget, true);
+    setProjectDirtyState(true);
     refreshExplorerOpenDocuments();
     updateBreadcrumbStatus();
     refreshWorkspaceView();
@@ -1814,9 +1894,9 @@ void MainWindow::markAllTabsDirty()
 {
     for (int i = 0; i < m_editorTabs->count(); ++i) {
         QWidget *tab = m_editorTabs->widget(i);
-        tab->setProperty("isDirty", true);
+        setDocumentDirtyState(tab, true);
     }
-    m_dirty = true;
+    setProjectDirtyState(true);
     updateTabDecorations();
 }
 
@@ -1824,10 +1904,30 @@ void MainWindow::markAllTabsClean()
 {
     for (int i = 0; i < m_editorTabs->count(); ++i) {
         QWidget *tab = m_editorTabs->widget(i);
-        tab->setProperty("isDirty", false);
+        setDocumentDirtyState(tab, false);
     }
-    m_dirty = false;
+    setProjectDirtyState(false);
     updateTabDecorations();
+}
+
+void MainWindow::setDocumentDirtyState(QWidget *widget, bool dirty)
+{
+    if (!widget)
+        return;
+
+    const bool changed = widget->property("isDirty").toBool() != dirty;
+    widget->setProperty("isDirty", dirty);
+    if (changed)
+        refreshTabTitle(widget);
+}
+
+void MainWindow::setProjectDirtyState(bool dirty)
+{
+    if (m_dirty == dirty)
+        return;
+
+    m_dirty = dirty;
+    updateStatusBar();
 }
 
 QString MainWindow::currentBreadcrumbText() const
@@ -2080,7 +2180,7 @@ void MainWindow::addProtectedSnippetFromSelection()
     syncProtectedSnippetsFromEditor(editor);
     markDocumentDirty(editor);
     updateStatusBar();
-    showDockPane(m_protectedSnippetDock);
+    PlotEngine::UI::showDockPane(m_protectedSnippetDock);
 }
 
 void MainWindow::removeProtectedSnippet(int index)
@@ -2210,10 +2310,10 @@ void MainWindow::rollbackLastAiEdit()
     refreshProjectViews();
     syncOpenDocumentTabs();
     if (snapshotDirty) {
-        m_dirty = true;
+        setProjectDirtyState(true);
         markAllTabsDirty();
     } else {
-        m_dirty = false;
+        setProjectDirtyState(false);
         markAllTabsClean();
     }
     updateStatusBar();
@@ -2365,6 +2465,55 @@ void MainWindow::discardPendingAiReview()
     m_pendingReviewAiModel.clear();
     if (m_reviewPanel)
         m_reviewPanel->clearReview();
+}
+
+void MainWindow::runPythonScript()
+{
+    const QString scriptPath = QFileDialog::getOpenFileName(
+        this,
+        "Python スクリプトを選択",
+        QString(),
+        "Python Scripts (*.py);;All Files (*)");
+    if (scriptPath.isEmpty())
+        return;
+
+    const auto result = PlotEngine::Scripting::PythonScriptRunner::runFile(scriptPath, m_project);
+    if (!result.success) {
+        QMessageBox box(QMessageBox::Critical, "Python スクリプト",
+                        result.error.isEmpty()
+                            ? QStringLiteral("スクリプトの実行に失敗しました。")
+                            : result.error,
+                        QMessageBox::Ok, this);
+        QString details;
+        if (!result.output.trimmed().isEmpty())
+            details += QStringLiteral("出力:\n") + result.output.trimmed();
+        if (!details.isEmpty() && !result.error.trimmed().isEmpty())
+            details += QStringLiteral("\n\n");
+        if (!result.error.trimmed().isEmpty())
+            details += QStringLiteral("エラー:\n") + result.error.trimmed();
+        if (!details.isEmpty())
+            box.setDetailedText(details);
+        box.exec();
+        return;
+    }
+
+    if (result.changed)
+        markAllTabsDirty();
+    refreshProjectViews();
+
+    QString message = QStringLiteral("スクリプトを実行しました: %1").arg(QFileInfo(scriptPath).fileName());
+    QMessageBox box(QMessageBox::Information, "Python スクリプト", message, QMessageBox::Ok, this);
+    QString details;
+    if (!result.output.trimmed().isEmpty())
+        details += QStringLiteral("出力:\n") + result.output.trimmed();
+    if (!result.error.trimmed().isEmpty()) {
+        if (!details.isEmpty())
+            details += QStringLiteral("\n\n");
+        details += QStringLiteral("stderr:\n") + result.error.trimmed();
+    }
+    if (!details.isEmpty())
+        box.setDetailedText(details);
+    box.exec();
 }
 
 void MainWindow::restoreRevisionFromHistory(const QString &revisionId)
@@ -2868,7 +3017,7 @@ void MainWindow::polishCurrentEpisode()
             m_reviewPanel->setActions(actionItems);
             m_reviewPanel->setDiffSummary(previewDiff);
             m_reviewPanel->setRawResponse(response.content.left(16000));
-            showDockPane(m_reviewDock);
+            PlotEngine::UI::showDockPane(m_reviewDock);
             return;
         }
 
@@ -2919,7 +3068,7 @@ void MainWindow::polishCurrentEpisode()
 void MainWindow::addCharacter()
 {
     CharacterEntry c;
-    c.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.id = makeGeneratedId("character");
     c.name = "新キャラクター";
     m_project.characters.append(c);
     markAllTabsDirty();
@@ -2930,7 +3079,7 @@ void MainWindow::addCharacter()
 void MainWindow::addLocation()
 {
     LocationEntry l;
-    l.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    l.id = makeGeneratedId("location");
     l.name = "新場所";
     m_project.locations.append(l);
     markAllTabsDirty();
@@ -2945,7 +3094,7 @@ void MainWindow::setCurrentProject(const NovelProject &project)
     m_protectedSnippetsByDocument.clear();
     clearAiEditSnapshot();
     discardPendingAiReview();
-    markAllTabsClean();
+    setProjectDirtyState(false);
 
     while (m_editorTabs->count() > 0) {
         auto *w = m_editorTabs->widget(0);
@@ -3067,6 +3216,73 @@ void MainWindow::addRecentProject(const QString &path)
     updateRecentProjectsMenu();
 }
 
+QString MainWindow::promptBackupRecovery(const QString &projectPath, const QString &projectName)
+{
+    const auto backups = recoveryBackupsForProject(projectPath);
+    if (backups.isEmpty())
+        return QString();
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("回復候補"));
+    dialog.resize(720, 420);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+
+    auto *title = new QLabel(
+        projectPath.isEmpty()
+            ? QStringLiteral("未保存の回復データが見つかりました。")
+            : QStringLiteral("「%1」に対する回復データが見つかりました。").arg(projectName.isEmpty() ? QFileInfo(projectPath).fileName() : projectName),
+        &dialog);
+    title->setWordWrap(true);
+    layout->addWidget(title);
+
+    auto *hint = new QLabel(
+        QStringLiteral("新しい方のバックアップを選んで開くと、クラッシュ前の状態から作業を再開できます。"),
+        &dialog);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+
+    auto *list = new QListWidget(&dialog);
+    list->setSelectionMode(QAbstractItemView::SingleSelection);
+    for (const auto &entry : backups) {
+        QFileInfo info(entry.path);
+        QString label = QStringLiteral("%1  (%2)")
+            .arg(info.fileName())
+            .arg(entry.modified.isValid()
+                ? entry.modified.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                : QStringLiteral("time unavailable"));
+        auto *item = new QListWidgetItem(label, list);
+        item->setToolTip(info.absoluteFilePath());
+        item->setData(Qt::UserRole, info.absoluteFilePath());
+    }
+    if (list->count() > 0)
+        list->setCurrentRow(0);
+    layout->addWidget(list, 1);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Open | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&]() {
+        if (!list->currentItem())
+            return;
+        dialog.accept();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(list, &QListWidget::itemActivated, &dialog, [&]() {
+        dialog.accept();
+    });
+
+    if (dialog.exec() != QDialog::Accepted)
+        return QString();
+
+    auto *current = list->currentItem();
+    if (!current)
+        return QString();
+    return current->data(Qt::UserRole).toString();
+}
+
 void MainWindow::loadWindowState()
 {
     QSettings settings = PlotEngine::App::makeSettings();
@@ -3091,14 +3307,40 @@ void MainWindow::saveWindowState()
 void MainWindow::loadSessionState()
 {
     QSettings settings = PlotEngine::App::makeSettings();
-    const QString projectPath = settings.value("session/lastProjectPath").toString();
-    if (projectPath.isEmpty() || !QFileInfo::exists(projectPath)) {
+    const bool restoreLastProject = settings.value("session/restoreLastProjectOnStartup", true).toBool();
+    if (m_restoreLastProjectAction)
+        m_restoreLastProjectAction->setChecked(restoreLastProject);
+
+    if (!restoreLastProject) {
         refreshWorkspaceView();
         return;
     }
 
+    const QString projectPath = settings.value("session/lastProjectPath").toString();
+    if (projectPath.isEmpty()) {
+        refreshWorkspaceView();
+        return;
+    }
+
+    QString pathToOpen = projectPath;
+    const QFileInfo projectInfo(projectPath);
+    const auto backups = recoveryBackupsForProject(projectPath);
+    if (!backups.isEmpty()) {
+        const QDateTime projectModified = projectInfo.exists() ? projectInfo.lastModified() : QDateTime();
+        const bool needsRecovery = !projectInfo.exists() || backups.first().modified > projectModified;
+        if (needsRecovery) {
+            const QString recoveredPath = promptBackupRecovery(projectPath, projectInfo.fileName());
+            if (!recoveredPath.isEmpty())
+                pathToOpen = recoveredPath;
+        }
+    }
+
     m_loadingSession = true;
-    openProjectFile(projectPath);
+    if (!loadProjectFromFile(pathToOpen, projectPath)) {
+        m_loadingSession = false;
+        refreshWorkspaceView();
+        return;
+    }
 
     const QStringList openDocuments = settings.value("session/openDocuments").toStringList();
     bool restoredAny = false;
@@ -3117,9 +3359,12 @@ void MainWindow::loadSessionState()
         openFirstEpisodeIfAny();
 
     m_loadingSession = false;
+    setProjectDirtyState(false);
     markAllTabsClean();
     refreshExplorerOpenDocuments();
     updateStatusBar();
+    addRecentProject(m_project.filePath);
+    saveSessionState();
 }
 
 void MainWindow::saveSessionState()
@@ -3154,15 +3399,10 @@ void MainWindow::applyStyleSheet()
 {
     qApp->setStyleSheet(R"(
         QMainWindow { background: #1e1e1e; }
-        QMenuBar { background: #252526; color: #cccccc; padding: 2px 6px; }
-        QMenuBar::item:selected { background: #094771; }
         QMenu { background: #252526; color: #cccccc; border: 1px solid #1f1f1f; }
         QMenu::item:selected { background: #094771; }
-        QToolBar { background: #2d2d2d; border: none; spacing: 4px; padding: 4px; }
-        QToolBar QToolButton { color: #cccccc; padding: 4px 10px; border-radius: 3px; }
-        QToolBar QToolButton:hover { background: #3e3e42; }
         QTabWidget::pane { background: #1e1e1e; border: 1px solid #3c3c3c; }
-        QTabBar::tab { background: #2d2d2d; color: #cccccc; padding: 7px 12px; border: 1px solid #3c3c3c; border-bottom: none; min-width: 120px; }
+        QTabBar::tab { background: #2d2d2d; color: #cccccc; padding: 4px 8px; border: 1px solid #3c3c3c; border-bottom: none; min-width: 86px; }
         QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; border-bottom: 2px solid #007acc; }
         QTabBar::tab:hover { background: #3e3e42; }
         QTreeView { background: #1e1e1e; color: #cccccc; border: none; }

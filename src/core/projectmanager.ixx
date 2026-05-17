@@ -4,13 +4,10 @@ module;
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QUuid>
 #include <QDateTime>
-
-import std;
+#include <optional>
 
 export module PlotEngine.Core.ProjectManager;
-
 import PlotEngine.Core.NovelProject;
 
 export class ProjectManager {
@@ -53,17 +50,25 @@ inline std::optional<NovelProject> ProjectManager::load(const QString &path)
 
 inline NovelProject ProjectManager::createNew(const QString &name, const QString &author)
 {
+    auto makeGeneratedId = [](const char *prefix) {
+        static quint64 counter = 0;
+        return QStringLiteral("%1_%2_%3")
+            .arg(QLatin1String(prefix))
+            .arg(QDateTime::currentMSecsSinceEpoch())
+            .arg(++counter);
+    };
+
     NovelProject project;
     project.name = name;
     project.author = author;
 
     Chapter ch;
-    ch.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    ch.id = makeGeneratedId("chapter");
     ch.title = "第1章";
     ch.sortOrder = 0;
 
     Episode ep;
-    ep.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    ep.id = makeGeneratedId("episode");
     ep.title = "エピソード1";
     ep.createdAt = QDateTime::currentDateTime();
     ep.modifiedAt = QDateTime::currentDateTime();

@@ -4,10 +4,7 @@ module;
 #include <QStringList>
 #include <QVector>
 
-import std;
-
 export module PlotEngine.Core.ContextBuilder;
-
 import PlotEngine.Core.NovelProject;
 
 export namespace PlotEngine::Context {
@@ -68,7 +65,8 @@ QString buildChapterContext(const NovelProject &project, const QString &chapterI
             parts.append(QStringLiteral("章の要約: ") + ch.summary);
 
         parts.append(QStringLiteral("\n### エピソード一覧"));
-        for (const auto &ep : ch.episodes) {
+        for (int epIdx = 0; epIdx < ch.episodes.size(); ++epIdx) {
+            const auto &ep = ch.episodes[epIdx];
             QStringList epLines;
             epLines.append(QStringLiteral("- ") + ep.title);
             if (!ep.summary.isEmpty())
@@ -93,7 +91,8 @@ QString buildChapterContext(const NovelProject &project, const QString &chapterI
 QString buildEpisodeContext(const NovelProject &project, const QString &episodeId)
 {
     for (const auto &ch : project.chapters) {
-        for (const auto &ep : ch.episodes) {
+        for (int epIdx = 0; epIdx < ch.episodes.size(); ++epIdx) {
+            const auto &ep = ch.episodes[epIdx];
             if (ep.id != episodeId)
                 continue;
 
@@ -113,7 +112,6 @@ QString buildEpisodeContext(const NovelProject &project, const QString &episodeI
             if (ep.targetWordCount > 0)
                 parts.append(QStringLiteral("目標文字数: ") + QString::number(ep.targetWordCount));
 
-            auto epIdx = ch.episodes.indexOf(ep);
             if (epIdx > 0) {
                 const auto &prev = ch.episodes[epIdx - 1];
                 parts.append(QStringLiteral("\n### 前のエピソード: ") + prev.title);

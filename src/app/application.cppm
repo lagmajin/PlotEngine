@@ -7,8 +7,6 @@ module;
 #include "mainwindow.h"
 
 export module PlotEngine.App.Application;
-
-import std;
 import PlotEngine.App.Metadata;
 
 namespace {

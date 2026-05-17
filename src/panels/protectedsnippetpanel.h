@@ -5,7 +5,7 @@
 #include <QWidget>
 #include "wobjectdefs.h"
 
-import PlotEngine.UI.DockPane;
+#include "ui/dockpane.h"
 
 class QLabel;
 class QListWidget;

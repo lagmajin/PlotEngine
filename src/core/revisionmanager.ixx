@@ -4,15 +4,24 @@ module;
 #include <QDateTime>
 #include <QVector>
 #include <QJsonObject>
-#include <QUuid>
 #include <algorithm>
 #include <optional>
 
-import std;
-
 export module PlotEngine.Core.RevisionManager;
 
-export enum class RevisionType {
+namespace {
+QString makeGeneratedRevisionId()
+{
+    static quint64 counter = 0;
+    return QStringLiteral("rev_%1_%2")
+        .arg(QDateTime::currentMSecsSinceEpoch())
+        .arg(++counter);
+}
+}
+
+export namespace PlotEngine::Revisions {
+
+enum class RevisionType {
     ManualEdit,
     AiGenerated,
     AiPolished,
@@ -20,7 +29,7 @@ export enum class RevisionType {
     Rollback
 };
 
-export struct Revision {
+struct Revision {
     QString id;
     QDateTime timestamp;
     QString content;
@@ -33,7 +42,7 @@ export struct Revision {
     static Revision fromJson(const QJsonObject &json);
 };
 
-inline QString revisionTypeToString(RevisionType type)
+QString revisionTypeToString(RevisionType type)
 {
     switch (type) {
         case RevisionType::ManualEdit: return "manual";
@@ -45,7 +54,7 @@ inline QString revisionTypeToString(RevisionType type)
     return "unknown";
 }
 
-inline RevisionType revisionTypeFromString(const QString &str)
+RevisionType revisionTypeFromString(const QString &str)
 {
     if (str == "manual") return RevisionType::ManualEdit;
     if (str == "ai_generated") return RevisionType::AiGenerated;
@@ -55,7 +64,7 @@ inline RevisionType revisionTypeFromString(const QString &str)
     return RevisionType::ManualEdit;
 }
 
-inline QJsonObject Revision::toJson() const
+QJsonObject Revision::toJson() const
 {
     QJsonObject obj;
     obj["id"] = id;
@@ -68,7 +77,7 @@ inline QJsonObject Revision::toJson() const
     return obj;
 }
 
-inline Revision Revision::fromJson(const QJsonObject &json)
+Revision Revision::fromJson(const QJsonObject &json)
 {
     Revision r;
     r.id = json["id"].toString();
@@ -81,8 +90,6 @@ inline Revision Revision::fromJson(const QJsonObject &json)
     return r;
 }
 
-export namespace PlotEngine::Revisions {
-
 QVector<Revision> createRevision(const QString &episodeId, const QString &content,
                                   RevisionType type, const QString &notes = QString(),
                                   const QString &aiModel = QString())
@@ -91,7 +98,7 @@ QVector<Revision> createRevision(const QString &episodeId, const QString &conten
 
     QVector<Revision> revisions;
     Revision rev;
-    rev.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    rev.id = makeGeneratedRevisionId();
     rev.timestamp = QDateTime::currentDateTime();
     rev.content = content;
     rev.type = type;

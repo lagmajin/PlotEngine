@@ -18,6 +18,7 @@
 #include "wobjectdefs.h"
 
 class NovelProject;
+class AutoSaver;
 
 namespace PlotEngine::AI {
 struct EditPlan;
@@ -96,6 +97,8 @@ public:
     W_SLOT(applyPendingAiReview)
     void discardPendingAiReview();
     W_SLOT(discardPendingAiReview)
+    void runPythonScript();
+    W_SLOT(runPythonScript)
     void restoreRevisionFromHistory(const QString &revisionId);
     W_SLOT(restoreRevisionFromHistory, (const QString &))
     void addProtectedSnippetFromSelection();
@@ -124,7 +127,9 @@ private:
     void loadRecentProjects();
     void updateRecentProjectsMenu();
     void addRecentProject(const QString &path);
+    bool loadProjectFromFile(const QString &sourcePath, const QString &projectPath);
     void openProjectFile(const QString &path);
+    QString promptBackupRecovery(const QString &projectPath, const QString &projectName);
     bool openDocumentByKind(const QString &kind, const QString &id);
     bool promptCloseDocument(QWidget *tab);
     bool confirmSaveChanges();
@@ -149,8 +154,6 @@ private:
     void syncOpenDocumentTabs();
     void openQuickOpenResult(const QString &kind, const QString &id);
     void openSearchResult(const QString &kind, const QString &id, const QString &query);
-    void showDockPane(ads::CDockWidget *dock);
-    void floatDockPane(ads::CDockWidget *dock);
     void showAllDockPanes();
     void resetDockLayout();
     void setFocusMode(bool enabled);
@@ -172,6 +175,8 @@ private:
     void syncProtectedSnippetsFromEditor(NovelEditor *editor);
     QString currentDocumentProtectionKey() const;
     QString protectionKey(const QString &kind, const QString &id) const;
+    void setDocumentDirtyState(QWidget *widget, bool dirty);
+    void setProjectDirtyState(bool dirty);
 
     NovelProject *m_projectData = nullptr;
     bool m_dirty = false;
@@ -181,6 +186,7 @@ private:
     NovelProject *m_aiEditSnapshotData = nullptr;
     QString m_aiEditSnapshotLabel;
     QByteArray m_defaultDockState;
+    AutoSaver *m_autoSaver = nullptr;
 
     ads::CDockManager *m_dockManager = nullptr;
     QTabWidget *m_editorTabs = nullptr;
@@ -200,6 +206,7 @@ private:
     ads::CDockWidget *m_sceneBoardDock = nullptr;
     ads::CDockWidget *m_editorDock = nullptr;
     QAction *m_focusModeAction = nullptr;
+    QAction *m_restoreLastProjectAction = nullptr;
     QStackedWidget *m_centerStack = nullptr;
     QWidget *m_welcomePage = nullptr;
     QPushButton *m_welcomeNewProjectButton = nullptr;

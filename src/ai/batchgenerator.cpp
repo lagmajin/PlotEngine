@@ -1,5 +1,8 @@
 #include "batchgenerator.h"
+#include "wobjectimpl.h"
 import PlotEngine.Core.ContextBuilder;
+
+W_OBJECT_IMPL(BatchGenerator)
 
 BatchGenerator::BatchGenerator(IAiProvider *provider, QObject *parent)
     : QObject(parent), m_provider(provider)

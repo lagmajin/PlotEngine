@@ -5,8 +5,6 @@ module;
 
 export module PlotEngine.Core.TextUtils;
 
-import std;
-
 export namespace PlotEngine::Text {
 
 QString normalizeEpisodeText(const QString &text)
@@ -20,7 +18,7 @@ QString normalizeEpisodeText(const QString &text)
         line = line.trimmed();
 
     QString result;
-    std::size_t blankCount = 0;
+    int blankCount = 0;
     for (const QString &line : lines) {
         if (line.isEmpty()) {
             ++blankCount;

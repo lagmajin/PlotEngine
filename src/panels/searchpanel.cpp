@@ -59,7 +59,7 @@ void appendResult(QStandardItemModel *model, const QString &kind, const QString 
 
 DockPaneSpec SearchPanel::dockSpec()
 {
-    return { QStringLiteral("検索"), DockPlacement::Bottom, true };
+    return { QStringLiteral("検索"), DockPlacement::Right, true };
 }
 
 SearchPanel::SearchPanel(QWidget *parent)

@@ -6,9 +6,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include "wobjectdefs.h"
 
 class AnthropicProvider : public IAiProvider {
-    Q_OBJECT
+    W_OBJECT(AnthropicProvider)
 public:
     explicit AnthropicProvider(const QString &apiKey, QObject *parent = nullptr);
 

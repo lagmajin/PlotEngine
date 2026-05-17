@@ -12,8 +12,8 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# PlotEngine policy: project domain code uses C++ modules and imports the standard library as a module.
-set(CMAKE_CXX_MODULE_STD ON)
+# PlotEngine policy: project domain code uses C++ modules, but not the standard library module.
+set(CMAKE_CXX_MODULE_STD OFF)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
 set(CMAKE_AUTOMOC OFF)
@@ -24,6 +24,8 @@ set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Network)
 find_package(qtadvanceddocking-qt6 CONFIG REQUIRED)
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+find_package(pybind11 CONFIG REQUIRED)
 
 add_executable(PlotEngine
     src/main.cpp
@@ -49,12 +51,8 @@ add_executable(PlotEngine
     src/panels/protectedsnippetpanel.cpp
     src/panels/sceneboardpanel.h
     src/panels/sceneboardpanel.cpp
-    src/core/novelproject.h
-    src/core/novelproject.cpp
-    src/core/projectmanager.h
-    src/core/projectmanager.cpp
-    src/core/autosaver.h
-    src/core/autosaver.cpp
+    src/ui/dockpane.cpp
+    src/scripting/pythonscriptrunner.cpp
     src/ai/batchgenerator.h
     src/ai/batchgenerator.cpp
     src/ai/iaiprovider.h
@@ -84,11 +82,11 @@ target_sources(PlotEngine
         FILES
         src/app/metadata.ixx
         src/app/application.cppm
-        src/ui/dockpane.ixx
         src/ui/iconfactory.cppm
         src/core/textutils.ixx
         src/core/novelproject.ixx
         src/core/projectmanager.ixx
+        src/core/autosaver.ixx
         src/core/documentcommands.ixx
         src/core/revisionmanager.ixx
         src/core/revisionstore.ixx
@@ -99,7 +97,7 @@ target_sources(PlotEngine
         src/export/textexporter.ixx
 )
 
-target_link_libraries(PlotEngine PRIVATE Qt6::Widgets Qt6::Network ads::qtadvanceddocking-qt6)
+target_link_libraries(PlotEngine PRIVATE Qt6::Widgets Qt6::Network ads::qtadvanceddocking-qt6 pybind11::embed Python3::Python)
 if(WIN32)
     target_link_libraries(PlotEngine PRIVATE Crypt32)
 endif()

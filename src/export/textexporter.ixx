@@ -6,10 +6,7 @@ module;
 #include <QTextStream>
 #include <QDateTime>
 
-import std;
-
 export module PlotEngine.Core.TextExporter;
-
 import PlotEngine.Core.NovelProject;
 
 export namespace PlotEngine::Export {
