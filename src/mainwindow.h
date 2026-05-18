@@ -89,6 +89,8 @@ public:
     W_SLOT(projectSearch)
     void quickOpen();
     W_SLOT(quickOpen)
+    void showOutline();
+    W_SLOT(showOutline)
     void commandPalette();
     W_SLOT(commandPalette)
     void showAiSettings();
@@ -142,6 +144,7 @@ private:
     void showEditorWorkspace();
     void updateWelcomeState();
     void openFirstEpisodeIfAny();
+    void applyEditorLayoutDirection(Qt::LayoutDirection direction);
     void closeOpenDocument(const QString &kind, const QString &id);
     void closeOtherOpenDocuments(const QString &kind, const QString &id);
     void markDocumentDirty(QWidget *widget);
@@ -207,6 +210,9 @@ private:
     ads::CDockWidget *m_editorDock = nullptr;
     QAction *m_focusModeAction = nullptr;
     QAction *m_restoreLastProjectAction = nullptr;
+    QAction *m_editorLeftToRightAction = nullptr;
+    QAction *m_editorRightToLeftAction = nullptr;
+    QAction *m_editorVerticalAction = nullptr;
     QStackedWidget *m_centerStack = nullptr;
     QWidget *m_welcomePage = nullptr;
     QPushButton *m_welcomeNewProjectButton = nullptr;
@@ -228,4 +234,6 @@ private:
     QHash<QString, QVector<ProtectedSnippetRecord>> m_protectedSnippetsByDocument;
     bool m_focusModeEnabled = false;
     QHash<ads::CDockWidget*, bool> m_focusModeVisibilitySnapshot;
+    Qt::LayoutDirection m_editorLayoutDirection = Qt::LeftToRight;
+    bool m_editorVerticalModeEnabled = false;
 };

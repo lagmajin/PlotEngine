@@ -27,6 +27,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QGroupBox>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QListWidget>
 #include <QListWidgetItem>
@@ -41,6 +42,7 @@
 #include <QProcessEnvironment>
 #include <QInputDialog>
 #include <QMenu>
+#include <QActionGroup>
 #include <QSettings>
 #include <QFileInfo>
 #include <QDir>
@@ -158,6 +160,9 @@ enum class PaletteCommandId {
     Replace,
     FindNext,
     FindPrevious,
+    GoToLine,
+    Outline,
+    DuplicateLine,
     NewProject,
     OpenProject,
     SaveProject,
@@ -461,6 +466,63 @@ void MainWindow::setupMenuBar()
         if (editor) editor->findPrevious();
     }, QKeySequence("Shift+F3"));
     editMenu->addSeparator();
+    editMenu->addAction(appIcon("duplicate"), "行を複製(&D)", this, [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (!editor)
+            return;
+        QKeyEvent event(QEvent::KeyPress, Qt::Key_D, Qt::ControlModifier | Qt::ShiftModifier);
+        QApplication::sendEvent(editor, &event);
+    }, QKeySequence("Ctrl+Shift+D"));
+    editMenu->addAction(appIcon("goto-line"), "行へ移動(&L)", this, [this]() {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+        if (!editor)
+            return;
+        bool ok = false;
+        const int line = QInputDialog::getInt(this, "行へ移動", "行番号:", editor->textCursor().blockNumber() + 1, 1, 100000, 1, &ok);
+        if (ok)
+            editor->gotoLine(line);
+    }, QKeySequence("Ctrl+L"));
+    editMenu->addAction(appIcon("outline"), "アウトライン(&O)", this, &MainWindow::showOutline, QKeySequence("Ctrl+K, Ctrl+0"));
+    auto *writingDirectionMenu = editMenu->addMenu("書字方向");
+    auto *writingDirectionGroup = new QActionGroup(this);
+    writingDirectionGroup->setExclusive(true);
+    m_editorLeftToRightAction = writingDirectionMenu->addAction("左から右");
+    m_editorLeftToRightAction->setCheckable(true);
+    m_editorLeftToRightAction->setActionGroup(writingDirectionGroup);
+    m_editorRightToLeftAction = writingDirectionMenu->addAction("右から左");
+    m_editorRightToLeftAction->setCheckable(true);
+    m_editorRightToLeftAction->setActionGroup(writingDirectionGroup);
+    m_editorVerticalAction = writingDirectionMenu->addAction("縦書き(試作)");
+    m_editorVerticalAction->setCheckable(true);
+    m_editorVerticalAction->setActionGroup(writingDirectionGroup);
+    m_editorLeftToRightAction->setChecked(!m_editorVerticalModeEnabled && m_editorLayoutDirection == Qt::LeftToRight);
+    m_editorRightToLeftAction->setChecked(!m_editorVerticalModeEnabled && m_editorLayoutDirection == Qt::RightToLeft);
+    m_editorVerticalAction->setChecked(m_editorVerticalModeEnabled);
+    connect(m_editorLeftToRightAction, &QAction::triggered, this, [this]() {
+        m_editorVerticalModeEnabled = false;
+        applyEditorLayoutDirection(Qt::LeftToRight);
+        QSettings settings = PlotEngine::App::makeSettings();
+        settings.setValue("editor/layoutDirection", static_cast<int>(Qt::LeftToRight));
+        settings.setValue("editor/verticalMode", false);
+        settings.sync();
+    });
+    connect(m_editorRightToLeftAction, &QAction::triggered, this, [this]() {
+        m_editorVerticalModeEnabled = false;
+        applyEditorLayoutDirection(Qt::RightToLeft);
+        QSettings settings = PlotEngine::App::makeSettings();
+        settings.setValue("editor/layoutDirection", static_cast<int>(Qt::RightToLeft));
+        settings.setValue("editor/verticalMode", false);
+        settings.sync();
+    });
+    connect(m_editorVerticalAction, &QAction::triggered, this, [this]() {
+        m_editorVerticalModeEnabled = true;
+        applyEditorLayoutDirection(Qt::RightToLeft);
+        QSettings settings = PlotEngine::App::makeSettings();
+        settings.setValue("editor/layoutDirection", static_cast<int>(Qt::RightToLeft));
+        settings.setValue("editor/verticalMode", true);
+        settings.sync();
+    });
+    editMenu->addSeparator();
     editMenu->addAction(appIcon("quick-open"), "クイックオープン(&P)", this, &MainWindow::quickOpen, QKeySequence("Ctrl+P"));
     editMenu->addAction(appIcon("project-search"), "プロジェクト全体検索", this, &MainWindow::projectSearch, QKeySequence("Ctrl+Shift+F"));
     auto *paletteAction = editMenu->addAction(appIcon("command-palette"), "コマンドパレット(&C)", this, &MainWindow::commandPalette);
@@ -598,6 +660,7 @@ void MainWindow::setupEditorTabs()
 
     m_editorDock = PlotEngine::UI::createDockPane(m_dockManager, { QStringLiteral("エディタ"), DockPlacement::Center, true }, m_centerStack);
     m_editorDock->setIcon(appIcon("editor"));
+    applyEditorLayoutDirection(m_editorLayoutDirection);
 
     connect(m_editorTabs, &QTabWidget::tabCloseRequested, this, [this](int index) {
         auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(index));
@@ -980,6 +1043,9 @@ void MainWindow::commandPalette()
     commands.append({"置換", "エディタ", "Ctrl+H", PaletteCommandId::Replace, {}, {}});
     commands.append({"次を検索", "エディタ", "F3", PaletteCommandId::FindNext, {}, {}});
     commands.append({"前を検索", "エディタ", "Shift+F3", PaletteCommandId::FindPrevious, {}, {}});
+    commands.append({"行へ移動", "エディタ", "Ctrl+G", PaletteCommandId::GoToLine, {}, {}});
+    commands.append({"アウトライン", "エディタ", "Ctrl+K, Ctrl+0", PaletteCommandId::Outline, {}, {}});
+    commands.append({"行を複製", "エディタ", "Ctrl+Shift+D", PaletteCommandId::DuplicateLine, {}, {}});
     commands.append({"新規プロジェクト", "ファイル", "Ctrl+N", PaletteCommandId::NewProject, {}, {}});
     commands.append({"プロジェクトを開く", "ファイル", "Ctrl+O", PaletteCommandId::OpenProject, {}, {}});
     commands.append({"保存", "ファイル", "Ctrl+S", PaletteCommandId::SaveProject, {}, {}});
@@ -1067,6 +1133,27 @@ void MainWindow::commandPalette()
         case PaletteCommandId::FindPrevious: {
             auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
             if (editor) editor->findPrevious();
+            break;
+        }
+        case PaletteCommandId::GoToLine: {
+            auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+            if (!editor)
+                break;
+            bool ok = false;
+            const int line = QInputDialog::getInt(this, "行へ移動", "行番号:", editor->textCursor().blockNumber() + 1, 1, 100000, 1, &ok);
+            if (ok)
+                editor->gotoLine(line);
+            break;
+        }
+        case PaletteCommandId::Outline:
+            showOutline();
+            break;
+        case PaletteCommandId::DuplicateLine: {
+            auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->currentWidget());
+            if (editor) {
+                QKeyEvent event(QEvent::KeyPress, Qt::Key_D, Qt::ControlModifier | Qt::ShiftModifier);
+                QCoreApplication::sendEvent(editor, &event);
+            }
             break;
         }
         case PaletteCommandId::NewProject:
@@ -1456,6 +1543,11 @@ void MainWindow::onEpisodeSelected(const QString &chapterId, const QString &epis
     }
 
     auto *editor = new NovelEditor(episodeId);
+    editor->setWritingMode(m_editorVerticalModeEnabled
+        ? NovelEditor::WritingMode::VerticalRightToLeft
+        : (m_editorLayoutDirection == Qt::RightToLeft
+            ? NovelEditor::WritingMode::RightToLeft
+            : NovelEditor::WritingMode::LeftToRight));
     editor->setProperty("documentKind", "episode");
     editor->setProperty("documentId", episodeId);
     editor->setProperty("chapterId", chapterId);
@@ -1508,6 +1600,11 @@ void MainWindow::onCharacterSelected(const QString &characterId)
     }
 
     auto *editor = new NovelEditor(characterId);
+    editor->setWritingMode(m_editorVerticalModeEnabled
+        ? NovelEditor::WritingMode::VerticalRightToLeft
+        : (m_editorLayoutDirection == Qt::RightToLeft
+            ? NovelEditor::WritingMode::RightToLeft
+            : NovelEditor::WritingMode::LeftToRight));
     editor->setProperty("documentKind", "character");
     editor->setProperty("documentId", characterId);
     editor->setProperty("baseTabTitle", tabTitle);
@@ -1556,6 +1653,11 @@ void MainWindow::onLocationSelected(const QString &locationId)
     }
 
     auto *editor = new NovelEditor(locationId);
+    editor->setWritingMode(m_editorVerticalModeEnabled
+        ? NovelEditor::WritingMode::VerticalRightToLeft
+        : (m_editorLayoutDirection == Qt::RightToLeft
+            ? NovelEditor::WritingMode::RightToLeft
+            : NovelEditor::WritingMode::LeftToRight));
     editor->setProperty("documentKind", "location");
     editor->setProperty("documentId", locationId);
     editor->setProperty("baseTabTitle", tabTitle);
@@ -1687,6 +1789,88 @@ void MainWindow::showEditorWorkspace()
     if (!m_centerStack || !m_editorTabs)
         return;
     m_centerStack->setCurrentWidget(m_editorTabs);
+}
+
+void MainWindow::showOutline()
+{
+    auto *editor = qobject_cast<NovelEditor*>(m_editorTabs ? m_editorTabs->currentWidget() : nullptr);
+    if (!editor)
+        return;
+
+    const QVector<NovelEditor::OutlineEntry> entries = editor->outlineEntries();
+    if (entries.isEmpty()) {
+        QMessageBox::information(this, "アウトライン", "見出し候補が見つかりませんでした。");
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle("アウトライン");
+    dialog.setMinimumSize(560, 420);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *list = new QListWidget(&dialog);
+    list->setUniformItemSizes(true);
+    layout->addWidget(list);
+
+    for (const auto &entry : entries) {
+        const QString label = QStringLiteral("%1行: %2")
+            .arg(entry.lineNumber)
+            .arg(entry.title);
+        auto *item = new QListWidgetItem(label, list);
+        item->setData(Qt::UserRole, entry.lineNumber);
+        item->setData(Qt::UserRole + 1, entry.level);
+    }
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    auto *jumpButton = buttons->addButton("移動", QDialogButtonBox::AcceptRole);
+    layout->addWidget(buttons);
+
+    auto jumpToSelection = [&]() {
+        auto *item = list->currentItem();
+        if (!item)
+            return;
+        const int lineNumber = item->data(Qt::UserRole).toInt();
+        dialog.accept();
+        editor->gotoLine(lineNumber);
+    };
+
+    connect(list, &QListWidget::itemDoubleClicked, &dialog, [&](QListWidgetItem *) {
+        jumpToSelection();
+    });
+    connect(jumpButton, &QAbstractButton::clicked, &dialog, [&]() {
+        jumpToSelection();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (!entries.isEmpty())
+        list->setCurrentRow(0);
+
+    dialog.exec();
+}
+
+void MainWindow::applyEditorLayoutDirection(Qt::LayoutDirection direction)
+{
+    m_editorLayoutDirection = direction;
+    if (m_editorLeftToRightAction)
+        m_editorLeftToRightAction->setChecked(!m_editorVerticalModeEnabled && direction == Qt::LeftToRight);
+    if (m_editorRightToLeftAction)
+        m_editorRightToLeftAction->setChecked(!m_editorVerticalModeEnabled && direction == Qt::RightToLeft);
+    if (m_editorVerticalAction)
+        m_editorVerticalAction->setChecked(m_editorVerticalModeEnabled);
+    if (!m_editorTabs)
+        return;
+
+    for (int i = 0; i < m_editorTabs->count(); ++i) {
+        auto *editor = qobject_cast<NovelEditor*>(m_editorTabs->widget(i));
+        if (!editor)
+            continue;
+        if (m_editorVerticalModeEnabled)
+            editor->setWritingMode(NovelEditor::WritingMode::VerticalRightToLeft);
+        else
+            editor->setWritingMode(direction == Qt::RightToLeft
+                ? NovelEditor::WritingMode::RightToLeft
+                : NovelEditor::WritingMode::LeftToRight);
+    }
 }
 
 void MainWindow::updateWelcomeState()
@@ -3307,6 +3491,10 @@ void MainWindow::saveWindowState()
 void MainWindow::loadSessionState()
 {
     QSettings settings = PlotEngine::App::makeSettings();
+    m_editorLayoutDirection = static_cast<Qt::LayoutDirection>(
+        settings.value("editor/layoutDirection", static_cast<int>(Qt::LeftToRight)).toInt());
+    m_editorVerticalModeEnabled = settings.value("editor/verticalMode", false).toBool();
+    applyEditorLayoutDirection(m_editorLayoutDirection);
     const bool restoreLastProject = settings.value("session/restoreLastProjectOnStartup", true).toBool();
     if (m_restoreLastProjectAction)
         m_restoreLastProjectAction->setChecked(restoreLastProject);
@@ -3371,6 +3559,8 @@ void MainWindow::saveSessionState()
 {
     QSettings settings = PlotEngine::App::makeSettings();
     settings.setValue("session/lastProjectPath", m_project.filePath);
+    settings.setValue("editor/layoutDirection", static_cast<int>(m_editorLayoutDirection));
+    settings.setValue("editor/verticalMode", m_editorVerticalModeEnabled);
 
     QStringList openDocuments;
     for (int i = 0; i < m_editorTabs->count(); ++i) {

@@ -8,8 +8,13 @@
 #include <QResizeEvent>
 #include <QPaintEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QMimeData>
 #include <QContextMenuEvent>
+#include <QEvent>
+#include <QInputMethodEvent>
+#include <QInputMethodQueryEvent>
+#include <QWheelEvent>
 #include "wobjectdefs.h"
 
 class QLineEdit;
@@ -22,6 +27,18 @@ class LineNumberArea;
 class NovelEditor : public QPlainTextEdit {
     W_OBJECT(NovelEditor)
 public:
+    struct OutlineEntry {
+        QString title;
+        int lineNumber = 1;
+        int level = 0;
+    };
+
+    enum class WritingMode {
+        LeftToRight,
+        RightToLeft,
+        VerticalRightToLeft,
+    };
+
     struct ProtectedSnippet {
         QString label;
         QString text;
@@ -34,6 +51,10 @@ public:
     explicit NovelEditor(const QString &sceneId, QWidget *parent = nullptr);
 
     QString sceneId() const { return m_sceneId; }
+    void setWritingMode(WritingMode mode);
+    WritingMode writingMode() const { return m_writingMode; }
+    void setTextLayoutDirection(Qt::LayoutDirection direction);
+    Qt::LayoutDirection textLayoutDirection() const { return m_textLayoutDirection; }
     void setContent(const QString &text);
     void showSearchBar();
     void showReplaceBar();
@@ -41,10 +62,12 @@ public:
     bool findPrevious();
     void replaceCurrent();
     int replaceAll();
+    void gotoLine(int lineNumber);
     void setSearchText(const QString &text);
     QString currentSearchText() const;
     void setProtectedSnippets(const QVector<ProtectedSnippet> &snippets);
     QVector<ProtectedSnippet> protectedSnippets() const;
+    QVector<OutlineEntry> outlineEntries() const;
 
 public:
     void contentChanged(const QString &text)
@@ -53,10 +76,16 @@ public:
     W_SIGNAL(protectedSnippetsEdited)
 
 protected:
+    void paintEvent(QPaintEvent *event) override;
+    void changeEvent(QEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void insertFromMimeData(const QMimeData *source) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void inputMethodEvent(QInputMethodEvent *event) override;
+    QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
 
 private:
     void onTextChanged();
@@ -101,8 +130,45 @@ private:
     QString textForRange(int start, int length) const;
     void normalizeProtectedSnippets();
     void notifyProtectedEditBlocked() const;
+    void applyTextLayoutDirection();
+    void applyWritingMode();
+    bool isVerticalWriting() const;
+    void paintVerticalDocument(QPaintEvent *event);
+    QTextCursor cursorForVerticalPosition(const QPoint &pos) const;
+    bool moveVerticalCursor(int blockDelta, int charDelta, bool keepAnchor);
+    int verticalColumnAdvance() const;
+    int verticalCharacterAdvance() const;
+    void clampVerticalOffsets();
+    struct VerticalUnit {
+        QString text;
+        int start = -1;
+        int length = 0;
+        bool ruby = false;
+        QString rubyText;
+        bool tateChuYoko = false;
+    };
+    QVector<VerticalUnit> parseVerticalUnits(const QString &text) const;
+    QRect verticalUnitRect(int columnX, int rowY, const VerticalUnit &unit) const;
+    void paintVerticalCursor(QPainter &painter) const;
+    void paintVerticalPreedit(QPainter &painter) const;
+    void applyIndentationToSelection(bool outdent);
+    bool handleReturnKey(QKeyEvent *event);
+    bool handleTabKey(QKeyEvent *event);
+    bool handleAutoPairKey(QKeyEvent *event);
+    bool handleClosingBracketSkip(QKeyEvent *event);
+    bool handleDuplicateLineShortcut(QKeyEvent *event);
+    bool handleOutlineNavigationShortcut(QKeyEvent *event);
+    QString currentLineIndentation() const;
+    int currentLineNumber() const;
+    void duplicateCurrentLine();
+    bool moveToAdjacentParagraph(bool forward);
+    static QChar matchingClosingChar(QChar open);
+    static bool isAutoPairOpenChar(QChar ch);
+    static bool isAutoPairCloseChar(QChar ch);
 
     QString m_sceneId;
+    WritingMode m_writingMode = WritingMode::LeftToRight;
+    Qt::LayoutDirection m_textLayoutDirection = Qt::LeftToRight;
     SyntaxHighlighter *m_highlighter = nullptr;
     LineNumberArea *m_lineNumberArea = nullptr;
     QWidget *m_searchBar = nullptr;
@@ -117,6 +183,9 @@ private:
     QPushButton *m_replaceAllButton = nullptr;
     QPushButton *m_closeSearchButton = nullptr;
     int m_searchBarHeight = 0;
+    int m_verticalColumnOffset = 0;
+    int m_verticalRowOffset = 0;
+    QString m_preeditText;
     bool m_loading = false;
     bool m_updatingProtectedSnippets = false;
     QVector<ProtectedSnippet> m_protectedSnippets;
